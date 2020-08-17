@@ -1,0 +1,217 @@
+---
+title: "MLE Lab 1: Intermediate R Programming"
+author: "Mateo Villamizar-Chaparro (sv161@duke.edu)"
+date: "Aug 21, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Let's begin with**:
+
+1. Introductions
+   + What's your name? 
+   + Why are you taking this class?
+   + What is the strangest thing you've done during the pandemic?
+
+2. Expectations for the class
+   + We are under weird times and circumstances where we are all learning how to deal with new things. So if you have any issues with the material or the class please let me know. Both Prof. Stegmüeller and I will try to be as helpful as possible. 
+   + During lab, *please* have your camera on at all times. It helps when you can see people's faces while teaching and it is best to have a more human interaction. This way we can all know each other a bit more.  
+   + Keep your microphone muted during class unless you want to participate or have a question.
+   + I'll try my best to keep the class as dynamic as possible, but I would like to **count with your active participation**. If you have any doubts, try using the *raise hand* function in Zoom or just unmute yourself and ask your question. 
+
+3. Office hours and labs links
+   + Office hours: Tuesdays from 2:00-3:00 pm (https://duke.zoom.us/j/4658823612)
+   + Labs: Fridays from 10:15-11:30 (https://duke.zoom.us/j/97644829054)
+
+
+## **Some useful R commands for this class**
+
+### Conditionals (which, ifelse, if else)
+Let's start with which(). A function that retrieves an index if the condition set up is true. 
+```{r which}
+x <- 30:40
+y <- 25:35
+
+# which(condition)
+which(x > 35)
+which(x %in% y) # %in% is a function that tells which elements are in both vectors
+```
+Other useful functions when dealing with conditionals are the else and ifelse functions.
+```{r else}
+# ifelse(Condition, value_if_true, value_if_false)
+# usually used when there are binary conditionals and can be used for multiple elements in a vector
+ifelse(x > 35, x, 10)
+
+# if(conditions){action}
+# Usually used for non-binary conditions. If can only be applied to ONE element of a vector
+if(sum(x) > 35) { 
+   s <- sum(x)
+   print(paste(s, "is greater than 20"))
+}
+
+# You can have a combination of if() else() that would work as ifelse() but for one element
+if(sum(x) < 20) {
+   s <- sum(x)
+   print(paste(s, "is small"))
+   } else {
+   print(paste(s, "is big"))
+   }
+
+# You can include multiple conditions under the same conditional (just like in excel). This is commonly used to calculate party_id in some US surveys
+a <- c(1, NA, 2, NA, NA)
+b <- c(NA, 6, NA, NA, 7)
+c <- c(NA, NA, NA, 4, NA)
+
+ifelse(!is.na(a), a, ifelse(!is.na(b), b, c))
+
+```
+### Loops
+The most common function for loops is the for(){} function
+```{r loops}
+numbers <- c() #create an empty array
+for(i in 1:10) {
+  numbers <- append(numbers, i) 
+}
+# numbers
+
+# You can also have loops inside of loops, let's try to fill a matrix. When dealing with matrices remember that [row, column]
+M1 <- matrix(NA, nrow = 10, ncol = 5)
+M1[1, ] <- c(1, 11, 21, 31, 41)
+# M1
+
+for(i in 2:10) {
+  for(j in 1:5) {
+    M1[i,j] <- M1[i-1,j] + 1
+  }
+}
+# M1
+
+# You can also use while to generate loops, it will continue performing the action you require until it is FALSE
+count <- 0
+while(count < 10) {
+  print(count^2)
+  count <- count + 1
+}
+```
+
+When using **while** on loops make sure the condition is met. Otherwise it will keep performing the action you required *ad infinitum*. You can use the function **break** if you want to break a loop after certain point. Another function you could use is **next**. 
+
+### Functions
+Most of the structures used in R are functions built ito packages by other people. You can make and create your own functions in R to deal with packages you don't trust or functions that would make your life easier.
+```{r functions}
+# Let's try to extract the third digit of a number
+third_number<- function(num){ # here you include your arguments
+   digits <-as.numeric(strsplit(as.character(num), "")[[1]]) #strsplit creates a list of lists hence the [[]][] when calling its elements
+   return(digits[3])
+}
+third_number(498513)
+third_number(49)
+
+# Now, let's include some conditionals within the arguments to help the user
+third_number<- function(num){
+   digits <-as.numeric(strsplit(as.character(num), "")[[1]]) #strsplit creates a list of lists hence the [[]][] when calling its elements
+   if(length(digits)<3){
+      print("Your number needs to be larger than 99")
+   } else {
+      return(digits[3])
+   }
+} # this creates an element in your Global environment
+third_number(49)
+third_number(498513)
+```
+
+### Remembering Probability distributions
+We would be using the commands for probability distributions a lot. So, let's go through the basics again. R has four functions that help us calculate information from already known probability distributions. Those are the following:
+
+Function     | Purpose                                               |
+------------ | ----------------------------------------------------- |
+**d**XXX     | Height of the pdf or pmf at a certain point           |
+**p**XXX     | Gives the cdf of a function at a certain point        |
+**q**XXX     | Distribution's quantile function (inverse pXXX)       |
+**r**XXX     | Random draw from a distribution                       |
+
+You can change XXX to your preferred distribution (i.e. binomial, poisson, Beta, gamma, etc). Always use **?XXX** to look at the arguments needed in each probability function. 
+```{r prob}
+# rXXX()
+set.seed(1234) # Whenever you are using randomizing functions in R set a seed so you can get the same results every time
+d1 <- rnorm(1000) # 100 draws from a normal distribution with mean=0 and sd=1, you can change the default values by including the values you want as arguments in the function
+mean(d1)
+sd(d1)
+hist(d1, main = "Histogram for a Normal Distribution", xlab = "Quantile")
+
+# dXXX() 
+# Let's try to graph the pdf
+x <- seq(from=-3, to=+3, length.out=100) # create an index variable with the data you want, this will be your X axis
+y <- dnorm(x) # density (height) of the distribution at that point
+
+# Run all the following commands at the same time
+plot(x, y, main="Standard Normal Distribution", type='l',
+ylab="Density", xlab="Quantile")
+abline(h=0)
+
+# pXXX()
+# let's build a cdf
+cdf <- pnorm(x, mean = 0, sd = 1)
+plot(cdf, type = 'l')
+# We can use the pdf to evaluate the percentage of observations to the left or to the right of a given point
+pnorm(0.5, mean=0, sd=1)
+1-pnorm(0.5, mean=0, sd=1)
+
+# qxxx() 
+# it is the inverse of pXXX() if we give the percentage we know the value of the quantile
+qnorm(0.69, mean=0, sd=1)
+
+
+```
+
+### Apply and split
+R also has some functions that allows us to split dataframes and to apply the same function to all elements in a determined data structure. The main difference between **lapply** and **sapply** is that the former returns the results in a list while sapply returns the results in a vector if possible. I'm following here chapter 6 on the *R Cookbook* by Teetor.
+```{r sapply}
+library(MASS) # load the MASS package so we can use the Cars93 dataset. This dataset contains car sales in the USA in 1993
+head(Cars93)
+origin <- split(Cars93$Min.Price, Cars93$Origin) # split the dataset by country of origin and keep the minimum price information
+# Let's calculate some of the summary statistics for each group (Prices are in $1000)
+mean(origin[[1]])
+mean(origin[[2]])
+
+# Let's try to calculate now the length of each group. The basic structure is lapply(list, function)
+lapply(origin, length) # returns a list
+sapply(origin, length) # returns a vector, usually working with vectors is sometiems easier.
+
+# Let's calculate the means and medians of both groups
+sapply(origin, mean)
+sapply(origin, range) # results in a matrix
+
+# We can also use apply to matrices, but we need to be careful if we want to calculate the function on each row or on each column. First, let's create a matrix of values for student's scores in different undergrad level courses. 
+set.seed(1234)
+M2 <- matrix(runif(20, min = 3.3, max = 4), nrow = 5, ncol=4)
+colnames(M2) <- c("PS1", "Ps2", "Ps3", "PS4")
+rownames(M2) <- c("Student 1", "Student 2", "Student 3", "Student 4", "Student 5")
+M2
+
+#  apply(array, 1/2, function) if you want to calculate the rows you use 1 and if you want columns you use 2
+apply(M2, 1, mean)
+apply(M2, 2, mean)
+```
+
+### Others and additional resrouces
+1. We would deal with results from linear and generalized linear models later. It would be useful to know the structure function [str()] that shows you the internal structure of a given object. This way, if you need to call an element from the stored information you would know how to do it, 
+```{r str}
+df <- cars
+lm1 <- lm(dist~speed, data=cars)
+str(lm1)
+# It makes calling information from an objetc a bit easier
+lm1$coefficients[2] # Coefficient for speed
+lm1$fitted.values[1] # fitted value for observation 1
+```
+
+2. In case you want some R resources, I recommend the following:
+   + A basic R guide (https://cran.r-project.org/doc/manuals/R-intro.pdf)
+   + How to deal with missing data (https://uc-r.github.io/missing_values)
+   + R markdown basics (https://rmarkdown.rstudio.com/authoring_basics.html)
+   + Some R style coding guide (https://google.github.io/styleguide/Rguide.xml)
+
+
