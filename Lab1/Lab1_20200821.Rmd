@@ -173,6 +173,7 @@ R also has some functions that allows us to split dataframes and to apply the sa
 library(MASS) # load the MASS package so we can use the Cars93 dataset. This dataset contains car sales in the USA in 1993
 head(Cars93)
 origin <- split(Cars93$Min.Price, Cars93$Origin) # split the dataset by country of origin and keep the minimum price information
+origin
 # Let's calculate some of the summary statistics for each group (Prices are in $1000)
 mean(origin[[1]])
 mean(origin[[2]])
