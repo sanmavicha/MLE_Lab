@@ -1,0 +1,322 @@
+---
+title: 'MLE Lab 2: Basic Regression and Graphs'
+author: "Mateo Villamizar Chaparro"
+date: "August 28, 2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# PAckages we need to load or install if you haven't installed them 
+library(AER)            # Contains a lot of datasets
+library(tidyverse)      # Loads a different coding language that could be more useful in certain situations
+library(ggplot2)        # Creates ice plots
+library(GGally)         # Extension of ggplot
+library(stargazer)      # Good to export results to Latex
+library(knitr)          # Gives tools for better knitting in R markdown
+library(xtable)         # Helps generate tables
+library(papeR)          # Helps generate tablesin multiple languages
+library(broom)          # Helps generate coefficient plots
+library(lmtest)         # Contains functions for teting linear regression models
+library(sandwich)       # Helps estimate robust standard errors
+library(estimatr)       # More robust packages
+```
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065). We can start chatting about you small papers and replication.
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+
+## **Practice exercise**
+Let's see how well you can use functions in R. Construct a function called *vol* that returns the volume of a cone and a cilinder when given the radius and the height. Feel free to look at the formulas online, I'm not assuming you know these by heart, although maybe I'm wrong.  
+
+```{r practice}
+vol <- function(h, r){
+  cone <- round((1/3)*pi*h*r^2, 2)
+  cil <- round(pi*h*r^2, 2)
+  return(paste("The volume of the cone is", cone, "and the colume of the cilinder is", cil))
+}
+
+vol(1,2)
+```
+
+## **The Basic Linear Model**
+Let's derive the OLS result using matrices and then using that information to manually calculate the ressults of a simple regression. In matrix terms we could have a linear model like this
+$$
+\begin{bmatrix} y_1 \\ y_2 \\ \vdots \\y_n\end{bmatrix}_{nx1} = \begin{bmatrix} 1 & x_{11} & x_{12} & \cdots & x_{1k} \\ 1 & x_{21} & x_{22} & \cdots & x_{2k} \\ \vdots & \vdots & \vdots & \ddots & \vdots \\ 1 & x_{n1} & x_{n2} & \cdots & x_{nk}\end{bmatrix}_{nxk} \begin{bmatrix} \beta_1 \\ \beta_2 \\ \vdots \\ \beta_n \end{bmatrix}_{kx1} + \begin{bmatrix} \epsilon_1 \\ \epsilon_2 \\ \vdots \\ \epsilon_n\end{bmatrix}_{nx1}
+$$
+For ease of notation, we will use capital letters to indicate matrices. Have an extra look to the size of the matrices and make sure they are comformable. The goal of this is obtain a formula for the residuals
+
+$$
+\begin{split}
+Y &= X\beta+\epsilon \\
+\\
+\epsilon &= Y - X \hat\beta
+\end{split}
+$$
+For OLS, we would want to minimize the sum of the squared residuals (SSR) $\epsilon' \epsilon$. In this case $\epsilon$ is a vector and $\epsilon' \epsilon = \sum_{i=1}^n e^2_i$. But, don't trust me, let's see why this is the case and start recalling some matrix algebra.
+
+$$
+\begin{split}
+SSR &= \epsilon'\epsilon \\
+&= \begin{bmatrix} \epsilon_1 & \cdots & \epsilon_n \end{bmatrix} \begin{bmatrix} \epsilon_1 \\ \vdots \\ \epsilon_n \end{bmatrix} \\
+\\
+&= \begin{bmatrix} \epsilon_1*\epsilon_1 +  \epsilon_2*\epsilon_2 + \cdots + \epsilon_n*\epsilon_n \end{bmatrix} \\
+\\
+&= \sum_{i=1}^n \epsilon^2_i
+\end{split}
+$$
+**Is the resulting SSR a scalar, a vector or a matrix?**
+
+Let's continue the derivation:
+
+$$
+\begin{split}
+\epsilon'*\epsilon &= (Y-X\hat\beta)'(Y-X\hat\beta) \\
+\\
+&= (Y' - X'\hat\beta')(Y-X\hat\beta) \\
+\\
+&=Y'Y - \beta'X'Y - Y'X\beta + \hat\beta'X'X'\hat\beta \\
+\\
+& = Y'Y - 2\hat\beta'XY + \hat\beta'X'X'\hat\beta
+\end{split}
+$$
+Here we are using the fact that the *transpose of a scalar is the same scalar*. Why? Let's check the sizes of the matrices. 
+
+With this result, since we want to minimize the SSR, then we just partially derive the equation with respect to $\hat\beta$ and equalize the result to zero.
+
+$$
+\begin{split}
+\frac{\partial SSR}{\partial \hat\beta} = -2X'Y + 2 X'X\hat\beta &= 0 \\
+\\
+2 X'X'\hat\beta &= 2X'Y  \\
+\\
+X'X\hat\beta &= X'Y  \\
+\\
+(X'X)^{-1} X'X \hat\beta &= (X'X)^{-1}X'Y  \\
+\\
+I\hat\beta &= (X'X)^{-1}X'Y \\
+\\
+\hat\beta &= (X'X)^{-1}X'Y 
+\end{split}
+$$
+To understand the derivative of the second term refer to Green 2007, pages 981-982. But basically, $x'Ax=\sum_{i=1}^n\sum_{j=i}^n x_ix_j*a_{ij}$  which follows a quadratic form then $\frac{\partial Y}{\partial x}=2Ax$. There are some mathematical properties from the $(X'X)$ matrix that allow $(X'X)^{-1}$ to exist: it is symmetric, it is a square matrix and is positive definite matrix (it basically works the same as a real number). See additional resources if you're interested in the algebra behind this. 
+
+### Let's use R to calculate this manually
+We are going to use the PhD publications dataset in the [AER package](https://cran.r-project.org/web/packages/AER/AER.pdf). This dataset has information on the scientific productivity of PhD students in biochemistry. It has 6 variables and we are interested in learning what are the factors that influence the productivity of PhD students. 
+
+```{r sum_stat, echo = FALSE, results = 'asis'}
+data("PhDPublications", package = "AER") # Loading the dataset
+Df1 <- PhDPublications                   # Assigning a name for the dataframe
+
+# We need to convert our factor variables into numeric variables, there are multiple ways of doing this. As a good data practice, never overwrite your variables.
+Df1$female <- ifelse(Df1$gender== "female", 1,0)
+Df1$not_marr <- ifelse(Df1$married== "no", 1,0)
+
+# Let's explore the dataset a little bit. The summarize command comes from the papeR package. 
+kable(summarize(Df1))                   # kable is just to show it nicely on markdown 
+
+# There is a very usuful tidy command that we can use as well
+Df1 %>%
+  dplyr::select(articles, kids, prestige, gender, married) %>%
+  as.data.frame() %>%
+  ggpairs()
+
+```
+
+After analyzing the data, let's run our regression
+
+```{r ols}
+# Create our outcome variable
+Y <- Df1$articles
+
+# Create our covariates matrix, whenever you create your matrix by hand remember to include the intercept! Again, there are multiple ways of doing this. Choose the one you feel more comfortable
+X <- cbind(1, as.matrix(Df1[c(-1, -2, -3)]))  # The advantage of this one is that we keep the column names, but with big datasets is harder
+X <- cbind(1, Df1$kids, Df1$prestige, Df1$mentor, Df1$female, Df1$not_marr) # This ones gives us a matrix directly
+colnames(X) <- c("intercept", "kids", "prestige", "mentor", "female", "not married")
+
+# Time to calculate the betas
+Betas <- solve(t(X)%*%X)%*%t(X)%*%Y           # Notice here that when you are multiplying matrices you need to use %*%, also when taking the inverse of a matrix ALWAYS use the command solve NOT ^-1.
+
+mod1 <- lm(articles ~ kids + prestige + mentor + female + not_marr, data = Df1)
+
+# Let's compare them side by side
+CompBetas <- cbind(Betas, mod1$coefficients)
+colnames(CompBetas) <- c("Manual", "lm function")
+round(CompBetas, 3)
+```
+
+### Let's practice some OLS interpretations and make some graphs
+Let's go back a bit and run different models to remember the interpretation of coefficients
+
+1. Let's look at a regression between articles and gender.
+```{r dummy}
+# Regression with one Dummy
+OLS2 <- lm(articles ~ female, data = Df1)
+OLS2 <- lm(articles ~ gender, data = Df1) #Notice that we can use factor variables as well
+summary(OLS2)
+
+# Regression with a continous variable
+OLS3 <- lm(articles ~ mentor, data = Df1)
+summary(OLS3)
+
+# Let's create a scatter plot and see if there are any differences across genders
+ggplot(Df1, aes(x=mentor, y=articles, color = gender)) + 
+  geom_point(alpha=0.5) + geom_smooth(method = lm) # Notice that here I'm calling the factor variable gender instead of the dummy variable female
+
+# regression with an interaction
+OLS4 <- lm(articles ~ mentor * female, data = Df1)
+summary(OLS4)
+```
+Here it is important to remember two things:
+
++ How to calculate the marginal effects
+  + $\hat\beta_0$ : male and the mentor no publications
+  + $\hat\beta_1$ : one additional mentor article in the number of pu art for males
+  + $\hat\beta_2$ : the effect of being female with a mentor with zero published articles
+  + Effect of being female : $\beta_2 + \beta_3 \times mentor$
+  + Effect of one more article written by the mentor : $\beta_1 + \beta_3 * female$
++ Notice that to include all parent and interaction terms we used * but you can also
+  + Include just the interaction term by using x1:x2
+  + Nest the second variable in the first by using X1/x2 which could be useful shortcut for [calculating marginal effects](https://grantmcdermott.com/2019/12/16/interaction-effects/)
+  + Include all parent and interaction terms x1*x2
+
+2. Let's go back to the full regression now
+```{r full}
+# Full regression
+# some visual representation of the coefficients using the broom package and ggplot
+TidyOLS <- tidy(mod1, conf.int = T) # creates a new element that makes graphing easier
+TidyOLS
+
+# Let's graph a coefficient plot
+P1 <- ggplot(TidyOLS, mapping = aes(x=term, y=estimate)) + geom_point() # creates a coefficient plot
+P1 + geom_hline(yintercept = 0) + coord_flip()                          # includes the vertical line in zero and flips coordinates
+
+# Let's add the standard errors
+p <- ggplot(TidyOLS, mapping = aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high))
+p + geom_pointrange() + coord_flip() + labs(x="", y="OLS Estimate") + geom_hline(yintercept = 0)
+```
+
+### Some good practices when running regressions
+
+```{r before}
+# Check for influential observations and outliers that could be driving the model
+influencePlot(mod1)
+# Check distribution assumptions, here we would like to see a line that implies our data came from a given distributon, in this case a normal one
+qqPlot(mod1)
+# Check for influential variables in the model
+avPlots(mod1)
+
+# Check to see if the assumptions of linearity and homoskedasticity apply
+# We would like to find a horizontal line and a sort of "cloud" pattern, any deviations from that might indicate the model has some issues
+residualPlots(mod1, ~1)  # To calculate the residual versus fitted values plot
+residualPlots(mod1)      # Shows the residual plots for all variables and the fitted values
+```
+
+
+# **Standard Errors and Homoskedasticity**
+So far, we haven't talked a lot about standard errors. But first, let's remember the Gauss-Markov assumptions.
+## Gauss Markov Assumptions
+
+**Why do we need these assumptions?**
+
+1. The model is linear
+2. There is no perfect multicollinearity (identification condition)
+3. Zero conditional mean $E[\epsilon|X]=0$
+4. $E[\epsilon'\epsilon|X]=\sigma^2I$ which implies homoskedasticity and no autocorrelation
+5. X must be generated by a process uncorrelated with $\epsilon$
+6. __Not an assumption__ but helpful: the $\epsilon|X \sim N(0, \sigma^2I)$
+
+## Let's see how assumption 4 works and focus in **homoskedasticity**
+$$
+\begin{split}
+E[\epsilon'\epsilon|X] &= E \begin{bmatrix} \epsilon_1 | X \\ \vdots \\ \epsilon_n|X \end{bmatrix} \begin{bmatrix} \epsilon_1 | X & \cdots & \epsilon_n|X \end{bmatrix} \\
+\\
+&= E\begin{bmatrix} \epsilon_1^2|X & \epsilon_1\epsilon_2|X & \cdots & \epsilon_1\epsilon_n|X \\ \epsilon_2\epsilon_1 |X & \epsilon_{2}^2|X & \cdots & \epsilon_2\epsilon_n|X \\ \vdots & \vdots & \ddots & \vdots\\\epsilon_n\epsilon_1 |X & \epsilon_{n}\epsilon_2|X & \cdots & \epsilon_n^2|X  \end{bmatrix} \\
+\\
+&= \begin{bmatrix} E[\epsilon_1^2|X] & E[\epsilon_1\epsilon_2|X] & \cdots & E[\epsilon_1\epsilon_n|X] \\ E[\epsilon_2\epsilon_1 |X] & E[\epsilon_{2}^2|X] & \cdots & E[\epsilon_2\epsilon_n|X] \\ \vdots & \vdots & \ddots & \vdots\\ E[\epsilon_n\epsilon_1 |X] & E[\epsilon_{n}\epsilon_2|X] & \cdots & E[\epsilon_n^2|X]  \end{bmatrix}
+\end{split}
+$$
+But we have assumed that $E[\epsilon_i^2]=\sigma^2$ $\forall i $ and that there is no autocorrelation hence $E[\epsilon_i\epsilon_j|X]=0$. Thus:
+$$
+\begin{split}
+E[\epsilon'\epsilon|X] &= \begin{bmatrix} \sigma^2 & 0 & \cdots & 0 \\ 0 & \sigma^2 & \cdots & 0 \\ \vdots & \vdots & \ddots & \vdots\\ 0 & 0 & \cdots & \sigma^2  \end{bmatrix} =\sigma^2 \begin{bmatrix} 1 & 0 & \cdots & 0 \\ 0 & 1 & \cdots & 0 \\ \vdots & \vdots & \ddots & \vdots\\ 0 & 0 & \cdots & 1  \end{bmatrix} = \sigma^2I = \Omega
+\end{split}
+$$
+With this information, we can now estimate the variance-covariance matrix of the linear model
+
+$$
+\begin{split}
+Varcov &= E[(\hat\beta-\beta)(\hat\beta-\beta)'] \\
+& = (X'X)^{-1}X'E[\epsilon'\epsilon|X] X(X'X)^{-1} \\
+& = (X'X)^{-1}X'\Omega X(X'X)^{-1} \\
+& = (X'X)^{-1}X'\sigma^2I X(X'X)^{-1} \\
+& = \sigma^2 (X'X)^{-1}X'I X(X'X)^{-1} \\
+& = \sigma^2 (X'X)^{-1} \\
+\end{split}
+$$
+Since $\sigma^2$ is a population parameter, we don't know its true value so we use the estimate $\hat\sigma^2= \frac{\epsilon'\epsilon}{n-k}$
+
+Hence the varcov matrix can be calculated using $\frac{\epsilon'\epsilon}{n-k}(X'X)^{-1}$.
+
+## How to deal with heteroskedasticity in R
+Let's see if we have issue with the assumption of homoskedasticity. For a better understanding of the different types of robust standard errors look at [this documentation file](https://cran.r-project.org/web/packages/sandwich/vignettes/sandwich.pdf)
+```{r robust}
+# Let's run a Breusch-Pagan test for heteroskedasticity
+# Null: Variance of the residuals is constant H_o: \delta_1=...=delta_k=0
+# Test: USes a F-test (R^2/k)/(1-R^2/n-k-1) ~ F(k, n-k-1) or LM = NR^2 ~ Chisq(k)
+bptest(mod1)
+
+# We will use the coeftest function from the package lmtest
+coeftest(mod1, vcov = vcovHC(mod1, type = "HC1")) # Notice here we are using HC0 which is the White's Robust heteroskedasticity correction. You can also use HC1 which corrects with the degrees of freedom. The default is HC3
+# Another way to calculate it
+mod2 <- lm_robust(articles ~ kids + prestige + mentor + female + not_marr, data = Df1)  # default HC2, thanks Lucy
+summary(mod2)
+```
+
+## Coefficient plot
+Let's do a coefficient plot with the results from the robust and the OLS estimation. Although graphs are encouraged and easier to understand, always include the table results of your models, at least in your appendix. The code was adapted from [here](https://gist.github.com/dsparks/4332698) 
+
+```{r coeffplot}
+# Put model estimates into temporary data.frames:
+model1Frame <- data.frame(Variable = rownames(summary(mod1)$coef),
+                          Coefficient = summary(mod1)$coef[, 1],
+                          SE = summary(mod1)$coef[, 2],
+                          modelName = "OLS")
+model2Frame <- data.frame(Variable = rownames(summary(mod2)$coef),
+                          Coefficient = summary(mod2)$coef[, 1],
+                          SE = summary(mod2)$coef[, 2],
+                          modelName = "Robust")
+
+# Combine these data.frames
+allModelFrame <- data.frame(rbind(model1Frame, model2Frame))  # etc.
+
+# Specify the width of your confidence intervals
+interval1 <- -qnorm((1-0.95)/2)  # 95% multiplier
+
+# Plot
+p1 <- ggplot(allModelFrame, aes(colour = modelName))                                               # create the area
+p1 <- p1 + geom_hline(yintercept = 0, colour = gray(1/2), lty = 2)                                 # add the zero line
+p1 <- p1 + geom_linerange(aes(x = Variable, ymin = Coefficient - SE*interval1,                  
+                                ymax = Coefficient + SE*interval1),
+                            lwd = 1, position = position_dodge(width = 1/2))                       # add the se  
+p1 <- p1 + geom_pointrange(aes(x = Variable, y = Coefficient, ymin = Coefficient - SE*interval1,
+                                 ymax = Coefficient + SE*interval1),
+                             lwd = 1/2, position = position_dodge(width = 1/2),
+                             shape = 21, fill = "WHITE")                                           # add the point estimates
+p1 <- p1 + coord_flip() + theme_bw()  + ggtitle("Comparing several models")                        # flip coordinates and give a title
+p1
+# The trick to these is position_dodge() tha allows to include multiple coefficients at the same time
+
+
+```
+
+
+# **Additional Resources**
+  + I highly recommend Kieran Healy's [book](https://socviz.co/index.html#preface) on Data Visualization using Ggplot 
+  + [Positive definite and semi-definite matrices](https://www.youtube.com/watch?v=ttMZB5Gm_fM)
+  + [ggplot visualization examples](http://r-statistics.co/Top50-Ggplot2-Visualizations-MasterList-R-Code.html)
+  + [Properties for estimators](https://canvas.harvard.edu/courses/8498/modules/items/284319)
+  + [R-saquared visual explanation](https://www.machinelearningplus.com/wp-content/uploads/2017/03/R_Squared_Computation.png)
