@@ -1,0 +1,359 @@
+---
+title: "Lab 3"
+author: "Mateo Villamizar Chaparro (sv161@duke.edu)"
+date: "Sept 4, 2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065)
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+
+## **Practice exercise**
+We can calculate the variance (and the standard errors) of a regression manually. Remember that $varcov = \frac{\epsilon'\epsilon}{n-k}(X'X)^{-1}$.Use the information below to calculate manually the variance-covariance matrix of last lab's model. 
+
+```{r varcov}
+# Loading data
+data("PhDPublications", package = "AER") # Loading the dataset
+Df1 <- PhDPublications
+# Creating dummies for factor variables
+Df1$female <- ifelse(Df1$gender== "female", 1,0)
+Df1$not_marr <- ifelse(Df1$married== "no", 1,0)
+# Creating the pieces of our model
+Y <- Df1$articles
+X <- cbind(1, Df1$kids, Df1$prestige, Df1$mentor, Df1$female, Df1$not_marr)
+colnames(X) <- c("intercept", "kids", "prestige", "mentor", "female", "not married")
+# Calculating the coefficients
+Betas <- solve(t(X)%*%X)%*%t(X)%*%Y 
+
+# Calculate the varcov matrix
+Res <- Y - X%*%Betas                          # calculating the residuals manually
+RSS <- as.numeric(t(Res)%*%Res)               # calculating the RSS
+# RSS <- sum(resid(MODEL)^2)                  # extracting directly from the model
+n <- length(Y)                                # number of observations
+k <- ncol(X)                                  # number of covariates/RHS variables
+VarCov <- (RSS/(n-k))*solve(t(X)%*%X)         # We get the names here because we named them before
+
+# Let's check
+mod1 <- lm(articles ~ kids + prestige + mentor + female + not_marr, data = Df1)
+vcov(mod1)
+
+```
+## **Probability distributions again!**
+### **Discrete distributions**
+Let's deep down a bit more on probability distributions since we are going to need them in the following weeks. Let's start with the discreet distributions that have a **countable** number of values:
+
+Distribution      | Parameters      | PMF                                           | Mean         | Variance            |  
+----------------- | ----------------| ----------------------------------------------| -------------| ------------------- |
+Bernoulli         | $Bernoulli(p)$  | $p^k(1-p)^k$                                  | p            | pq                  |
+Binomial          | $Bi(n,p)$       | $n\choose k$ $p^k(1-p)^{n-k}$                 | np           | npq                 |
+Negative Binomial | $Nbi(r,p)$      | $n-1\choose r-1$ $p^r(1-p)^{k}$               |$\frac{r}{p}$ | $\frac{r(1-p)}{p^2}$|
+Poisson           | $Pois(\lambda)$ | $\frac{e^{(-\lambda)}\lambda^y}{y!}$          | $\lambda$    | $\lambda$           |
+
+There are other discrete distributions (ie. geometrical) but they are rarely used in Political Science. It is important to recall how to calculate the expected value and the variance of these distributons.
+$$
+E[X] = \sum_{i=1}^n x_iP(X=x_i) \\
+V[X]=\sum_{i=1}^n(x_i-E[X])^2P(X=x_i)
+$$
+
+It would be a good exercise to calculate the expected values (mean) and variance results manually. Let's see some of the distributions ins more detail. 
+
+
+#### **Binomial and Bernoulli**
+```{r binom}
+set.seed(1234)
+
+# Bernoulli trials
+s <- 1000                  # set the number of draws from the distribution
+p <- 0.7                   # Probability of success
+y <- rbinom(s, 1, p)       # A vector of random bernoulli trials
+hist(y, probability = T)   # histogram of the results
+
+# Let's try and calculate the mean
+means <- matrix(NA, 1, 3)
+means[1] <- 0*(1-p) + 1*p  # Expected value
+means[2] <- mean(y)        # lSample variance
+means[3] <- p
+
+colnames(means) <- c("Expected value", "Sample mean", "Your brain")
+means
+
+# Let's go for the variance
+vars <- matrix(NA, 1, 3)
+vars[1] <- (1-p)*(0-means[1])^2+p*(1-means[1])^2
+vars[2] <- var(y)
+vars[3] <- (1-p)*p
+
+vars
+
+# Binomial
+set.seed(1234)
+s <- 1000                  # set the number of draws from the distribution
+p <- 0.7                   # Probability of success
+n <- 3                     # Number of trials
+y <- rbinom(s, n, p)       # A vector of random bernoulli trials
+hist(y, probability = T)   # histogram of the results
+table(y)
+
+# Let's try and calculate the mean
+means <- matrix(NA, 1, 3)
+means[1] <- 0*(39/s) + 1*(185/s) + 2*(431/s) + 3*(345/s)   # Expected value
+means[2] <- mean(y)       
+means[3] <- n*p
+
+means
+
+# Let's go for the variance
+vars <- matrix(NA, 1, 2)
+vars[1] <- var(y)
+vars[2] <- n*(1-p)*p
+
+vars
+```
+
+#### **Poisson**
+The Poisson distribution is used to model count data
+```{r pois}
+set.seed(1234)
+
+s <- 1000                  # set the number of draws from the distribution
+lambda <- 4                # Probability of success
+y <- rpois(s, lambda)      # A vector of random bernoulli trials
+hist(y, probability = T)   # histogram of the results
+
+# Let's try and calculate the mean
+means <- matrix(NA, 1, 2)
+means[1] <- mean(y)
+means[2] <- lambda         # lSample variance
+
+means
+
+# Let's try and calculate the variance
+vars <- matrix(NA, 1, 2)
+vars[1] <- var(y)
+vars[2] <- lambda         # lSample variance
+
+vars
+
+```
+
+
+### **Continuous distributions**
+The secodn type of distributions are continous distributions, in this case the desity function is continuos and not a stair case like. This implies that the exact probability of a given point is zero, hence we use areas under the pdf to calculate probabilities. Find the means and variances of these distributions. 
+
+Distribution | Parameters            | PDF                                                             | 
+-------------| ----------------------| --------------------------------------------------------------- |
+Uniform      | $U(a,b)$              | $\frac{1}{(b-a)}$                                                       |
+Normal       | $N(\mu, \sigma^2)$    | $\frac{1}{\sqrt{2\pi\sigma^2}}e^-\frac{(x-\mu)^2}{2\sigma^2}$   |
+Exponential  | $Exp(\lambda)$        | $\frac{e^\frac{-x}{\lambda}}{\lambda}$                          |
+Gamma        | $Ga(a,b)$             | $\frac{b^a}{\Gamma(a)}x^{a-1}e^{-bx}$                           |
+Beta         | $Be(a,b$              | $\frac{\Gamma(a+b)}{\Gamma(a)\Gamma(b)}x^{a-1}(1-x)^{b-1}$      |
+
+There are other continous distributions (ie. multivariate normal, inverse-gamma, etc). The most common ones are the uniform and the normal distributions. Let's take a closer look at them. The Gamma and the Beta are some of the favourites for Bayesian statisticians. 
+
+The way we calculate the expected value and the variance of continues variables is as follows:
+$$
+E[X] = \int_{-\infty}^\infty xf(x) dx\\
+V[X]=\int_{-\infty}^\infty (x
+-E[X])^2f(x) dx
+$$
+Try to calculate some of the means and variances of the continous distributions as an exercise. Try the uniform which is easier to calculate. 
+
+#### **The Uniform distribution**
+The mean of the uniform distribution $\frac{a+b}{2}$ and the variance is $\frac{(b-a)^2}{12}$
+```{r uniform}
+set.seed(1234)
+s <- 1000                        # Set the number of draws from the distribution
+a <- 2                           # Minium parameter
+b <- 10                          # Maximum parameter
+y <- runif(s, min = a, max = b)  # draw s observations from a uniform distribution with parameters a, b
+hist(y)
+
+# Let's try and calculate the mean
+means <- matrix(NA, 1, 2)
+means[1] <- mean(y)
+means[2] <- (a+b)/2
+
+means
+
+# Let's try and calculate the vars
+vars <- matrix(NA, 1, 2)
+vars[1] <- var(y)
+vars[2] <- ((b-a)^2)/12
+
+vars
+```
+
+#### **The Normal distribution**
+
+Remember that in R the normal distribution needs the parameters for the mean and the STANDARD DEVIATION. Not, the variance as in other place.s Rememebr this when using it for coding. 
+```{r normal}
+set.seed(1234)
+s <- 1000                        # Set the number of draws from the distribution
+y <- rnorm(s)                    # draw s observations from a normal distribution with mu=0 and sigma=1
+hist(y)
+mean(y)
+var(y)
+
+# LEt's play with the parameters from the normal distribution
+y <- rnorm(s, 3, 1)               # draw s observations from a normal distribution with mu=3 and sigma=1
+hist(y)
+y <- rnorm(s, 3, 8)               # draw s observations from a normal distribution with mu=3 and sigma=8
+hist(y)
+```
+
+## **Simulations and Sampling**
+Well, we have been using a lot of simulation in the past couple of minutes. Usually, with the rXXX commands we are basically simulating the probability distributions. So, we are going to go a bit deeper and see how it might be useful. But first, let's look at the *sample* command. The *sample* command will be very helpful when doing bootstrapping, it allows us to take a random sample (a subgroup) from a dataset. I'm following the examples on [Cotton (2013)](https://www.amazon.com/Learning-Step-Step-Function-Analysis/dp/1449357105/ref=sr_1_3?dchild=1&keywords=cotton+2014+learning+r&qid=1599187587&sr=8-3)
+
+```{r sample}
+set.seed(1234)
+sample(5)                # If we just give a number it gives us a permutation of natural numbers from 1 to 5
+sample(5, 3)             # Take 3 random numbers from 1 to 5, the default is replace == FALSE
+sample(5, replace=TRUE)  # Five random draws from a series of natural numbers from 1 to 5 with replacement, which means we can have two numbers thar are the same
+
+# We can also create a vector from which to draw from
+z <- round(runif(10, 1,30),0)
+sample(z, 4)
+sample(z, 4, replace = TRUE)
+```
+### **The Let's Make a Deal Game**
+I know this is one of the most recurrent examples when looking at distributions and sampling. Mostly, because it shows you don't need to remember any of the formulas we just saw, but you can use a simulation approach to calculate the means and variances of distributions. It also created a very heated debate between statisticians at the time. But, just bear with me and let's look at it again. I'm adopting the code from [Prof. García-Ríos](https://www.sergiogarciarios.com/) website.
+
+The scenario is as follows:
+
+  + There are three doors one with a prize and two other with nothing
+  + You choose a door and the game host opens one of the other two with nothing in them.
+  + **What would you do? Would you change doors? Stay with the same door?** Let's try to calculate the probabilities. 
+  
+```{r mp}
+s <- 1000                 # Let's simulate this decision 1000 times
+doors <- c(1, 0, 0)       # Create a door vector with the indication of which door has the price
+cars.stay <- 0            # Empty vector to fill whenever we choose to keep the door
+cars.switch <- 0          # Empty vector to fill whenever we choose to change the door
+for (i in 1:s) {          # remember the loops? 
+  random.doors <- sample(doors, 3, replace = FALSE)
+  cars.stay <- cars.stay + random.doors[1]                   # First choose 'door number 1'
+  cars.switch <- cars.switch + sort(random.doors[2:3])[2]    # Swith doors
+}
+
+paste("Probability of winning without switching", cars.stay/s, sep = ": ")
+paste("Probability of winning when switching", cars.switch/s, sep = ": ")
+```
+
+## **MLE Example**
+"MLE is a unified way of thinking about model construction, estimation, and evaluation" (Ward and Ahquist, 2018). The main difference to other ways of estimation, is that under a maximum likelihood framework we assume that the data is fixed and we try to find which parameters are more likely to generate this data. So, under this idea, the parametrs are the random variables. This is the inversion Prof. Stegmueller talked in class. Matehmatically, we will take the joint probability  of the data as a function of parameter values for a particular density -or mass- function.
+
+Today, we will be focusing on the derivation of the MLE estimator for a binomial distribution. But first, it is sometimes easier to write probability models into two components. The *stochastic* and the *systematic* components. The former, describes our assumptions on how the data we have is distributed (the pdf of our data or the *data generation process*). While the latter, describes our assumpptions for the paramaters of the esochastic component. It is a systematic features that varies for each observation. This is also important because it shows there might be two kinds of uncertainty in the model. A estimation uncertainty (lack of information about the parameters) and a fundamnetal uncertainty associated with the data generation process. We can deal with the first one by increasing our sample size, but the second will always exist. 
+
+### The Bernoulli distribution
+Let's assume we have the following equations that model the decision of 5 individuals to vote:
+$$
+Y \sim Bernoulli(y_i|\pi_i) = \pi_i^{y_i}(1-\pi_i)^{1-y_i} \\
+\pi_i = p
+$$
+The vector indicating if people voted or not is $Y=${$1, 0, 0, 1, 1$}. We also need tu assume that the events are independent and identically distributed (iid). What is the meaning of this in the example? 
+
+Now, with this information, let's derive the likelihood function and the MLE estimator. Remember the likelihood function is equal to the joint probability of the data so we have:
+$$
+\begin{split}
+L(p|Y)  &= \prod_{i=1}^5 p^{y_i}(1-p)^{1-y_i}\\
+\\
+&= p^1(1-p)^0 \times p^0(1-p)^1 \times p^0(1-p)^1 \times p^1(1-p)^0 \times p^1(1-p)^0\\
+\\
+&= p^3(1-p)^2 \\
+\\
+&= p^{SumYes}(1-p)^{SumNO}
+\end{split}
+$$
+```{r numexp}
+# Let's create our likelihood function
+L <- function(y,p){
+  p^sum(y)*((1-p)^(length(y)-sum(y))) # What is this expression?
+}
+
+votes <- c(1,0,0,1,1)                 # Create our vector of votes 
+
+# Let's graph our likelihood function remember to run at the same time
+curve(L(votes, x), 0, 1, xlab="Candidate Values for p", ylab ="Likelihood")  # See how we can use function to graph! Here the x indicates the graph to take all values plausible. Command curve: curve(expression, from, to)
+abline(v=0.6, col="blue")
+```
+
+Let's try to derive our result analytically with the information we already have:
+$$
+\begin{split}
+L(p|Y)  &= \prod_{i=1}^5 p^{y_i}(1-p)^{1-y_i}\\
+\\
+&= p^3(1-p)^2\\
+\\
+ll(p|Y) &= ln(p^{3}(1-p)^{2}) \\
+\\
+&= ln(p^{3}) + ln((1-p)^{2}) \\
+\\
+&= 3 ln p + 2ln(1-p) \\
+\\
+\frac{\partial ll(p|Y)}{\partial p} &= \frac{3}{p}-\frac{2}{1-p} = 0 \\ 
+\\
+&= \frac{3}{p} = \frac{2}{1-p} \\
+\\
+&= 3-3p = 2p \\
+\\
+&= 3 = 5p \\
+\\
+\hat p &= \frac{3}{5} = 0.6
+\end{split}
+$$
+We can extend this for any Bernoulli distribution. Pay attention to the appearance of n ([summation notation](https://www.khanacademy.org/math/ap-calculus-ab/ab-integration-new/ab-6-3/a/review-summation-notation)), the transformation of $\prod$ into $\sum$ and the [operations with logarithms](https://www.andrews.edu/~calkins/math/webtexts/numb17.htm). Look that the MLE for the Bernoulli is equal to the sample mean! Any time you see a $\sum$ I mean $\sum_{i=1}^n$.
+$$
+\begin{split}
+L(p|Y)  &= \prod_{i=1}^n p^{y_i}(1-p)^{1-y_i}\\
+\\
+&= p^{\sum y_i}(1-p)^{\sum (1- y_i)}\\
+\\
+ll(p|Y) &= ln \left(p^{\sum y_i}(1-p)^{n - \sum (y_i)} \right) \\
+\\
+&= ln \left(p^{\sum y_i}\right) + ln\left((1-p)^{n-\sum y_i} \right) \\
+\\
+&= \sum y_i ln p + \left(n-\sum y_i\right)ln(1-p) \\
+\\
+\frac{\partial ll(p|Y)}{\partial p} &= \frac{\sum y_i}{p}-\frac{n-\sum y_i}{1-p} = 0 \\ 
+\\
+&= \frac{\sum y_i}{p} = \frac{n-\sum y_i}{1-p} \\
+\\
+&= \sum y_i - p\sum y_i = pn - p\sum y_i \\
+\\
+\hat p &= \frac{\sum y_i}{n} = \bar y
+\end{split}
+$$
+Let's calculate the MLE in R
+```{r mle_2}
+MleBern <- sum(votes)/length(votes)
+MleBern
+```
+
+We can also use the likelihood function we constructed earlier in case we don't know or we don't want to derive the solution analytically. For the we need to use the **optim** command. By default, the optim command will minimize a function but we need to maximize the likelihood. Thus, **always remember** to minimize the negative log-likelihood function.
+```{r mle_3}
+# Let's recall our function and make sure it is the negative likelihood function
+L <- function(y,p){
+  - p^sum(y)*((1-p)^(length(y)-sum(y))) 
+}
+
+StartingValues <- 0.5
+MLEResults <-  optim(par=StartingValues,    # Specify some starting values for the optimization process
+                     fn=L,                  # Here we need to call the function we want to optimize
+                     y = votes,             # call our data because it is part of our function
+                     method="BFGS",         # this is the approximation methods, use this as default
+                     hessian=TRUE)          # We will see this later, but we need the Hessian to calculate standard errors
+MLEResults$par
+```
+
+## **Additional Resources**
+  + The [book](https://www.amazon.com/Maximum-Likelihood-Social-Science-Strategies/dp/1316636828/ref=sr_1_1?dchild=1&keywords=ward+ahlquist&qid=1599059726&sr=8-1) we used when I took this class might be helpful
+  + An [assortment](https://rstudio.com/resources/cheatsheets/) of R cheat sheets
+  + Some of the [functions](https://www.statmethods.net/advstats/matrix.html) for linear algebra in R
+  + A [quick guide](https://www.math.uh.edu/~jmorgan/Math6397/day13/LinearAlgebraR-Handout.pdf) for linear algebra in R
