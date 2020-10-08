@@ -1,0 +1,408 @@
+---
+title: 'Lab 6: Measures of Fit and Strategies for Inference'
+author: "Mateo Villamizar Chaparro"
+date: "Sept 25, 2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab6")  # change this for your own working directory!
+library(stargazer)
+library(tidyverse)
+```
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065)
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+3. The first **short paper** is due in one week
+4. **Problem set 1** was due today before lab
+
+## **Measures of Fit and Model Comparison** ##
+
+So far, we have been able to etimate different models for binary dependent variables. However, we have not touched yet in how can we decide between models or how good of a fit the models are. Certainly, the Wald test could help us with the former, but there are other ways to do so. In this lab we will explore some ways to choose between models and determien some measures of fit. First, please load the "lab6_data.csv" file from sakai. This file contains seven variables and 2762 observations from the 2016 ANES. The variables are as follows: 
+
+  + *Vote*: Indicator variable if the individual casted a vote
+  + *Black*: Indicator variable if the individual self-identified as black
+  + *Hispanic*: Indicator variable if the individual self-identified as hispanic
+  + *pid7*: 7-point partisan identification scale
+  + *income*: income category for the respondent
+  + *age*: age of the respondent at the time of the survey
+  + *educ_attain*: Highest educational attainment from the individual at the time of the survey
+```{r anes}
+anes <- read.csv("lab6_data.csv")
+```
+```{r, results='asis'}
+stargazer::stargazer(anes, header = F,  type = 'html')
+```
+
+### **Model Comparison** ##
+The most common way to see which model is better is to compare the AIC (Akaike Information Criterion) and the BIC (Bayesian Information Criterion). Both estimates work in a similar way. They add a penalty to the value of the maximum log-likelihood related to the number of paramters used to estimate the fitted model. We would always like the model with lower values for the AIC and BIC. It is important to note that both measures are not in a meaningful scale, hence interepretation is senseless. 
+$$
+\begin{split}
+AIC &= -2 \log\mathcal{L} + 2k\\  
+\\
+BIC &= -2 \log\mathcal{L} + k \log n
+\end{split}
+$$
+
+With this information, let's estimate two different models to se which one is better. The first model will have all variables and the second model will have all of them except educational attainment.
+
+```{r comparison}
+set.seed(1234)
+# Create the matrices
+X_1 <- cbind(1, anes$black, anes$hisp, anes$pid7, anes$income, anes$age, anes$educ_attain)
+X_2<- cbind(1, anes$black, anes$hisp, anes$pid7, anes$income, anes$age)
+y <- anes$vote
+
+# Create the likelihood function
+ll_logit <- function(theta, y, X) {
+  # Parameters
+  beta <- theta[1:ncol(X)]
+  # linear predictor
+  mu <- X %*% beta
+  # link function
+  p <- 1/(1+exp(-mu))
+  # log likelihood
+  ll <- sum(y*log(p) + (1-y)*log(1-p))
+  return(ll)
+}
+
+# maximize likelihood function numerically
+# For model 1
+StartingValues <- rep(0,ncol(X_1))
+res1 <- optim(par=StartingValues,       
+             fn=ll_logit,              
+             y = y,        
+             X = X_1,                    
+             method = "BFGS",          
+             control=list(fnscale=-1), 
+             hessian=TRUE)
+
+# For model 2
+StartingValues <- rep(0,ncol(X_2))
+res2 <- optim(par=StartingValues,       
+             fn=ll_logit,              
+             y = y,        
+             X = X_2,                    
+             method = "BFGS",          
+             control=list(fnscale=-1), 
+             hessian=TRUE)
+
+# Create a place holder for the AIC and BIC
+aic_bic <- matrix(NA, 4,2)
+colnames(aic_bic) <- c("Model 1", "Model 2")
+rownames(aic_bic) <- c("AIC", "BIC", "AIC_can", "BIC_can")
+
+# Calculate the AIC
+aic_bic[1,1] <- -2*ll_logit(res1$par,y, X_1) + 2*ncol(X_1)
+aic_bic[1,2] <- -2*ll_logit(res2$par,y, X_2) + 2*ncol(X_2)
+
+# Calculate the BIC
+aic_bic[2,1] <- -2*ll_logit(res1$par,y, X_1) + ncol(X_1)*log(length(y))
+aic_bic[2,2] <- -2*ll_logit(res2$par,y, X_2) + ncol(X_2)*log(length(y))
+
+# Now, let's do it with the canned functions
+glm_1 <- glm(vote ~ black + hisp + pid7 + income + age + educ_attain, data = anes,
+             family=binomial(link="logit"))
+glm_2 <- glm(vote ~ black + hisp + pid7 + income + age , data = anes,
+             family=binomial(link="logit"))
+
+aic_bic[3,1] <- glm_1$aic
+aic_bic[3,2] <- glm_2$aic
+aic_bic[4,1] <- -2*logLik(glm_1) + ncol(glm_1$model)*log(length(anes$vote))
+aic_bic[4,2] <- -2*logLik(glm_2) + ncol(glm_1$model)*log(length(anes$vote))
+aic_bic
+
+```
+So, which model should we choose?
+
+### **Measures of fit** ##
+
+Now we know how to choose among models but, how to evalaute if the model is a good fit for the data? To answer this question we will need to dive into a sereis of measures that would allow us some sort of comparison between our model estimates and the actual values of our dependent variable. 
+
+### Percent Correctly Predicted (PCP) ###
+What percentage of our predictions are correctly predicted?
+```{r pcp}
+# First, let's calculate the fitted values of our model
+mu <- X_1 %*% res1$par
+FitValues <- 1/(1+exp(-mu))
+predicted <- ifelse(FitValues > 0.5, 1, 0) 
+# you can also use the canned function
+# predicted <- ifelse(glm_1$fitted.values > 0.5, 1, 0) 
+actual <- anes$vote
+
+# Calculate the pcp
+pcp <- mean(predicted == actual)
+pcp
+```
+### Proportionate Reduction of Error (PRE) ###
+What is the proportionate reduction in error of prediction from modal category (PMC) in the data. Whenever you are calculating this measure you would need to calculate the PCP first. The PRE makes a comparison between our predictions and just guessing the modal category every time. If our model is good, then the error would be smaller that guessing the modal category every time. 
+$$
+PRE = \frac{PCP-PMC}{1-PMC}
+$$
+```{r pre}
+# Identify the modal category
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+Mode(anes$vote)
+
+# calculate the pre
+pmp <- mean(anes$vote == Mode(anes$vote))    # Notice that here we are dealing with our original data
+pre <- (pcp - pmp)/(1 - pmp)                 # The PCP brings in our predictions
+pre
+```
+### Expected Percent Correctly Predicted (ePCP) ###
+For the ePCP tells us what would the *expected* percentage of correct predictions. In other words, what is the average probability of correctly predicting the values of the DV. In this case we are not rewarding weak guesses in our model (values like 0.501 for instance). For that, we need to calculate the follwing equation:
+$$
+ePCP = \frac{1}{n} \left[\sum_{y_i=1} \hat\pi_i + \sum_{y_i=0}(1-\hat\pi_i)\right]
+$$
+```{r epcp}
+n <- length(anes$vote)
+Guess1 <- predicted
+
+epcp <- 1/n*(sum(FitValues[actual==1]) +
+               sum(1 - FitValues[actual==0]))
+epcp
+# For the canned fucntions
+#epcp <- 1/n*(sum(predict(glm_1, type="response")[glm_1$y==1]) + sum(1 - predict(glm_1, type="response")[glm_1$y==0]))
+
+```
+### ROC Curve ###
+The ROC curve compares correct predictions with false positives.It is also a good tool to compare models. For this we are using te pROC package and use the canned functions. You can still use the pROC function with the uncanned model's results.We are interested in calculatinf the area under the ROC curve as a measure of model fit. The larger the area, the better model fit, can you explain why?
+
+------------------- | True Value =  1 | True Value =  0 | 
+------------------- | --------------- | --------------- |
+Predicted Value =  1| True Positive   | False Positive  |
+Predicted Value =  0| False Negative  | True Negative   |
+
+The y axis on the ROC curve is the *true positive rate* sometimes called sensitivity $\frac{true positive}{true positive + truenegatives}$. The x axis is the *false positive rate* sometimes called specificity ($1-Sensitivity$). The ROC also usually comes with a 45° line that indicates where the true positive rate is equal to the true negative rate as a comparison. This reference line indicates that the proportion of correctly classified cases is the same as the proportion of incorrect cases classified as 1. 
+
+```{r ROC, warning=FALSE, comment=FALSE, message = FALSE}
+library(pROC)
+y <- anes$vote
+# We use the predict function with the results from our canned models
+pp1 <- as.vector(predict(glm_1, type="response")) 
+pp2 <- as.vector(predict(glm_2, type="response"))
+
+p.roc1 <- roc(y,                                # original data
+              pp1,                              # predicted probabilities
+              plot=TRUE,                        # produce the plot
+              ci=TRUE)                          # calcualte confidence intervals
+p.roc2 <- roc(y, pp2, plot=TRUE, ci=TRUE, add=T, lty=2) 
+
+# Set up an empty matrix for results
+AUC <- matrix(NA, 2,1)
+colnames(AUC) <- c("AUC")
+rownames(AUC) <- c("Full Model", "No Education Model")
+AUC[1,1] <- auc(p.roc1)                         # Calculate auc for the full model, the function comes from pROC
+AUC[2,1] <- auc(p.roc2)                         # Calculate auc for the 2nd model, the function comes from pROC
+AUC
+
+# We can calculate the confidence itnervals as well
+ci.auc(p.roc1, conf.level=.95)                  # Generate 95% confidence interval for the are under the curve
+
+# We can also build our own plot with the information contained in p.roc#
+
+plot(1-p.roc1$specificities, p.roc1$sensitivities, 
+     type="l", lty=1, lwd=2, 
+     ylab="True positive rate", 
+     xlab="False positive rate",
+     main = "ROC for Vote Choice")
+lines(1-p.roc2$specificities, p.roc2$sensitivities, 
+      type="l", 
+      lty=2, 
+      col = "red",
+      lwd=2, add=T)
+lines(c(0,1),c(0,1))
+text(.3,.7, paste("AUC (Full model) =", round(auc(p.roc1),2)))
+text(.3,.65, paste("AUC (without education) =", round(auc(p.roc2),2)))
+legend("bottomright", c("Full Model","without education"), 
+       lty=c(1,2), 
+       col = c("black", "red"),
+       bty="n")
+
+```
+
+Here we see that the full model is also better than the model without education, but the difference between both is minimal.
+
+### Separation Plots ###
+The separation plot is a graphical representation of the relationship between predicted and observed values. It ranks all predicted probabilities of the model and then identifies which prediction were correctly classified. If we are able to classify correctly all of the events, then we will have clear clusters of data.We will used a canned function for this one as well. 
+```{r sep_plot, warning=FALSE, comment=FALSE, message = FALSE}
+library(separationplot)
+
+# We can use this function with both the canned and the uncanned results
+# Canned
+separationplot(as.vector(predict(glm_1, type="response")), # The function requires a vector object for the predicted values
+               anes$vote,                                  # Observed values 
+               newplot=F)                                  # Shows the plot
+# Uncanned
+separationplot(as.vector(FitValues), anes$vote, newplot = F)
+
+# Let's see a "bad" coefficient plot
+glm_3 <- glm(vote ~ hisp, data = anes,
+             family=binomial(link="logit"))
+
+separationplot(as.vector(predict(glm_3, type="response")), anes$vote, newplot = F)
+
+```
+
+
+## **Strategies for Inference** ##
+### Quantities of interest Review ###
+
+For this sections we will use the results and estimations from the first part of the lab. We usually can derive the quantities of interest for a logit using either the typical/average case approach and the observed value approach. If you use the average individual in your sample the results between both approaches should be relatively similar. 
+
+1. Expected Values and Predicted Probabilities
+
+Let's try to calculate the probability that a hispanic individual will vote
+
+    + 1.1 The Typical Case Approach
+```{r tca}
+# calling the optim results
+plogis(c(1,
+         0,
+         1,
+         mean(anes$pid7),
+         mean(anes$income), 
+         mean(anes$age), 
+         mean(anes$educ_attain))  # vector of values for the RHS vars ORDER MATTERS!!!
+       %*% res1$par)
+
+# using the canned function results
+plogis(c(1,0,1,mean(anes$pid7),mean(anes$income), mean(anes$age), mean(anes$educ_attain)) %*% coef(glm_1))
+
+```
+
+    + 1.2 The Observed value approach: For this approach we calculate the quantity of interest for each unit in the data and then we average across all units. As a mental exercise, think how would you define an interaction effect using this approach. 
+    
+```{r ova}
+# Create a new matrix to avoid overwritting the matrix model
+NewCovMat <- model.matrix(glm_1)
+# Give the values you need to the variable of interest, here we have to include black given that we assume people can be either hispanic, white or black
+NewCovMat[,"hisp"] <- 1
+NewCovMat[,"black"] <- 0
+
+# calculate the predicted probailities
+mean(plogis(NewCovMat%*%coef(glm_1)))
+mean(predict(glm_1, newdata=as.data.frame(NewCovMat), type="response"))
+```
+
+2. First Differences
+
+You might also want to calculate the first differences beteen a variable of interest in your data. For instance, let's see what is the difference in the probability of voting between a strong democrat and a strong republican. All the other variables will be at their central tendency measures. Note that the most common ethnic group is white, hence black and hispanic both will be zero.
+```{r FD}
+# Using the typical case approach
+# 1. set up the cases and calculate the predicted probabilities
+rep <- plogis(c(1,
+                0,
+                0,
+                7,
+                mean(anes$income), 
+                mean(anes$age), 
+                mean(anes$educ_attain))  # vector of values for the RHS vars ORDER MATTERS!!!
+               %*% res1$par)
+
+dem <- plogis(c(1,
+                0,
+                0,
+                1,
+                mean(anes$income), 
+                mean(anes$age), 
+                mean(anes$educ_attain))  # vector of values for the RHS vars ORDER MATTERS!!!
+               %*% res1$par)
+# 2. Calculate the quantity of interest
+fd <- rep-dem
+fd
+
+# Using the observed value approach 
+# 1. Set up the cases (here I'm using the canned functions)
+DEM <- REP <- model.matrix(glm_1)
+DEM[,"pid7"] <- 1
+REP[,"pid7"] <- 7
+
+# 2. Calculate the predicted probabilities
+dem <- predict(glm_1, newdata = as.data.frame(DEM), type="response")
+rep <- predict(glm_1, newdata = as.data.frame(REP), type="response")
+
+# 3. Calculate the first difference 
+fd <- mean(rep-dem)
+fd
+```
+
+3. Marginal Effects: see our last lab
+
+### Strategies for Inference ###
+
+There are multiple ways of doing simulations, for this section we will focus in simmulating the data by using a sampling distribution of the parameters. However, you can also see how to simulate via bootstrapping (check the [boot package](https://cran.r-project.org/web/packages/boot/boot.pdf)) and the delta method. We would be using the MASS package that contains the multivariate normal distribution. The multivariate normal distribution is just an extension of the normal distribution into a large dimensional space $\mathcal{R}^n$.
+
+Let's try calculating the confidence interval for the first difference between strong democrats and strong republicans across income categories.
+
+```{r simm}
+library(MASS)
+set.seed(1234)
+
+# call the results from our optim estimation and set up the other parameter
+gamma <- res1$par
+V <- solve(-res1$hessian)
+nsims <- 1000
+
+# Simmulate the draws of the multivariate normal given the results from our optim function
+sims <- mvrnorm(nsims, mu = gamma, Sigma = V)
+# you should get a nsimsXparameters matrix
+# using the canned functions
+# sims <- mvrnorm(nsims, mu=coef(glm_1), Sigma = vcov(glm_1))
+
+# Set the scenarios of interest
+inc <- seq(0, 28, 1)
+DEM <- REP <- cbind(1, 0, 0, mean(anes$pid7), inc, mean(anes$age), mean(anes$educ_attain))
+DEM[,4] <- 1
+REP[,4] <- 7
+
+# Calculate the linear predictor
+ThetaDem <- sims%*%t(DEM)
+ThetaRep <- sims%*%t(REP)
+
+# run the link function
+EV_Dem <- 1/(1+exp(-ThetaDem))
+EV_Rep <- 1/(1+exp(-ThetaRep))
+
+# Create the first difference
+fd <- EV_Rep - EV_Dem
+
+# Let's see the distribution of the first differences
+hist(fd, 
+     main = "Histogram of the First Difference \n between Strong Republicans and Strong Democrats",
+     xlab = "First Difference")
+abline(v = mean(fd), col = "#CC0066", lwd = 4)
+abline(v = quantile(fd, 0.025), col = "#CC00660F", lwd = 3)
+abline(v = quantile(fd, 0.975), col = "#CC00660F", lwd = 3)
+
+# Now let's calculate the averages and confidence intervals in order for us to graph them
+pred <- apply(fd, 2, mean)
+ci <- apply(fd,                                                    # object we want to apply it to
+            2,                                                     # 1 indicating to apply it to rows
+            quantile, c(0.025, 0.05, 0.9, 0.975))                  # the function we would apply
+
+
+# Let's plot the graph across income
+plot(inc, pred, 
+     lwd = 1.5, col = "#CC0066", type="l",
+     ylim = c(0.9, 0.98),
+     xlim = c(min(inc), max(inc)),
+     xlab = "Income",
+     ylab = "Probability of Voting")
+x <- c(inc, rev(inc))
+y95 <- c(ci[1,], rev(ci[4,]))
+y90 <- c(ci[2,], rev(ci[3,]))
+polygon(x, y95, col = "#CC00660F", border = FALSE)
+polygon(x, y90, col = "#cc00661f", border = FALSE)
+
+```
+
+## **Additional Resources** ##
+  + Take a look at this [Quick R guide](https://www.statmethods.net/advgraphs/parameters.html) for changing R plots.
