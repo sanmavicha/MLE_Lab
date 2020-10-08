@@ -1,0 +1,357 @@
+---
+title: "Lab 5: Binary Outcome Models"
+author: "Mateo Villamizar Chaparro"
+date: "Sept 18, 2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065)
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+3. The first **short paper** is due in two weeks
+4. **Problem set 1** is due next Friday (Sept. 24) before lab
+
+
+## **Conducting Wald Tests** ##
+```{r wdi, message=FALSE, warning=FALSE}
+library(WDI)                                      # Calls a package where we can download WDI ndicators
+
+# Some data wrangling
+wdi.df <- WDI(country = "all",
+              indicator = c("SM.POP.TOTL.ZS",     # Refugees as a percentage of the population
+                            "NY.GDP.PCAP.PP.CD",  # GDP per capita
+                            "NE.EXP.GNFS.ZS",     # Exports
+                            "SE.XPD.CTOT.ZS",     # Education expenditure
+                            "SH.XPD.CHEX.GD.ZS"), # Health expenditure   
+              start = 2015,
+              end = 2015, extra=T)                # The extra just add some addiitonal identifying variables 
+
+wdi.df <- subset(wdi.df, region != "Aggregates")
+wdi.df <- na.omit(wdi.df)
+names(wdi.df)[4:8] <- c("p_refugees", "gdp", "exports", "exp_educ", "exp_health")
+
+# Some models we want to choose from
+m2 <-  glm(log(p_refugees) ~ log(gdp) + exports + exp_health + exp_educ, family = gaussian(link = "identity"), data = wdi.df)
+
+```
+
+### Wald Test ###
+2. The more general case
+
+Here we want to calculate the Wald test in a more general way. This means construct it in a way where we could be able to conduct multiple tests at the same time. The model we are studying right now is m2, which contains 5 parameters $\hat\theta=[\hat\theta_0\quad\hat\theta_1\quad\hat\theta_2\quad\hat\theta_3\quad\hat\theta_4]$. The intercept and the four right hand side variables. Now, we are going to use the wald test to test the following linear restrinctions:
+
+  + $\theta_1=0.1$
+  + $\theta_3 + \theta_4=0.5$
+  
+Which in plain English say that the effect of 1% change of the GDP per capita is correlated with a 0.1% increase in the percentage of refugees. Similarly, the second restriction implies that the sum between the expenditure in health and education is 0.5. We can construct a system of equations with the given information.
+$$
+R = \begin{bmatrix} 0 & 1 & 0 & 0 & 0 \\ 0 & 0 & 0 & 1 & 1 \end{bmatrix}; \quad r=\begin{bmatrix} 0.1 \\ 0.5 \end{bmatrix}
+$$
+And thus we can represent our linear restrictions as $R\hat\theta=r$. For the test, we would like to compare the following hypothesis (where $\hat\theta$ is a vector of estimated coefficients):
+
+$H_o: R\hat\theta - r =0$
+
+$H_a: R\hat\theta - r \neq 0$
+
+The estimate we need to calculate is:
+$$
+W = (R\hat\theta - r)'(R(\hat V)R')^{-1}(R\hat\theta - r) \sim \chi^2_{(h)}
+$$
+Where $h$ is the number of restrictions
+
+```{r wald4}
+R <- matrix(c(0,1,0,0,0,0,0,0,1,1), 2,5)                         # Constructing the R matrix
+r <- matrix(c(0.1,0.5), 2, 1)                                    # Constructing the r vector
+thetas <- coef(m2)                                               # Calling the coeeficientes from model 2
+V <- vcov(m2)                                                    # Calling the variance covariance matrix
+W <- t(R%*%thetas-r) %*% solve(R%*%V%*%t(R)) %*% (R%*%thetas-r)  # calculating the Wald statistic
+pchisq(W, 2, lower.tail = F)                                     # Compare W with a chisq distribution with 2 df
+```
+
+### Score Test ###
+
+This is another test to evaluate MLE models. In this case, it tests the difference between the slopes of tangent lines between the estimate and the value we want to test it against. The null hypothesis here implies that the slopes are the same.This is a less common test. 
+
+$H_o: \hat\theta_j - \theta^* =0$
+
+$H_a: \hat\theta_j - \theta^*  \neq 0$
+
+The estimate we need to calculate is:
+$$
+ST = \frac{S(\theta_j)}{\sqrt{\mathscr{I}(\theta_j)}} \sim N(0,1)
+$$
+
+## **Binary Outcome Models** ##
+
+These types of models are constructed to analyze the correlation between a binary dependent variable and some explanatory variable(s). OLS is not well suited to deal with this types of dependent variables because of three things:
+ 
+  + Non-sensical predictions
+  + Heteroskedastic errors
+  + Assumes the relationship between the probability and a covariate is constant
+
+Let's look at some of them in R using the turnout dataset.
+
+### The Linear Probability Model (LPM) ###
+The LPM will use OLS to find the relationship between our binary outcome and the covariates. 
+```{r setup_binary, include=FALSE}
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab5")  # change this for your own working directory!
+library(foreign)                     # has the read.dta function
+turnout <- read.dta("turnout.dta")   # the dataset is in stata format
+```
+
+```{r LPM}
+mlpm <- lm(voted ~ female + age + edu + informed, data = turnout)
+
+# The probability is constant
+summary(mlpm)
+
+# When calculating the fitted values we get values larger than one or smaller than zero. 
+hist(mlpm$fitted.values,
+     main = "Fitted Values", xlab = "Fitted Values")
+abline(v=1, col="red")
+
+# It is a heteroskedastic model (by construction)
+plot(mlpm$residuals, mlpm$fitted.values, 
+     xlab = "Residuals", ylab = "Fitted Values")
+
+```
+
+The LPM could be useful under certain restricted circumstances, so it is not entirely a waste of time. If interested, see this [Heckman paper](https://www.jstor.org/stable/3087459?seq=1#metadata_info_tab_contents) and this [World Bank Blog]{https://blogs.worldbank.org/impactevaluations/whether-to-probit-or-to-probe-it-in-defense-of-the-linear-probability-model}.  
+
+### The Logit Model ###
+
+The logit model can be summarized by the following stochastic and systematic components
+$$
+\begin{split}
+Y &\sim Bernoulli(y_i|\pi_i) = \pi_i^{y_i}(1-\pi_i)^{1-y_i} \\
+\\
+\pi_i &= \Lambda(X_i\beta) = \frac{1}{1-e^{(-X_i\beta)}}
+\end{split}
+$$
+Where $\Lambda(X_i\beta)$ is the cummulative logistic function. Which results in the following likelihood function:
+$$
+ll(\beta | y, x) = \sum^n_{i=1}\left[y_i\ln\Lambda(X_i\beta)+(1-y_i)\ln\Lambda(1-X_i\beta)\right]
+$$
+
+Let's calculate the MLE in R using the numerical approximation approach:
+```{r logit, warning=FALSE}
+#  Construct the covariates matrix and the outcome vector
+X <- cbind(1, turnout$female, turnout$age, turnout$edu, turnout$informed)
+y <- turnout$voted
+
+# Create the likelihood function
+ll_logit <- function(theta, y, X) {
+  # Parameters
+  beta <- theta[1:ncol(X)]
+  # linear predictor
+  mu <- X %*% beta
+  # link function
+  p <- 1/(1+exp(-mu))
+  # log likelihood
+  ll <- sum(y*log(p) + (1-y)*log(1-p))
+  return(ll)
+}
+
+# maximize likelihood function numerically
+StartingValues <- c(0,0,0,0,0)
+res <- optim(par=StartingValues,       # starting values
+             fn=ll_logit,              # the likelihood function
+             y = turnout$voted,        # outcome variable
+             X = X,                    # covariates
+             method = "BFGS",          # optimization method
+             control=list(fnscale=-1), # max instead of min
+             hessian=TRUE)             # return Hessian matrix
+
+# Let's see the results 
+results <- matrix(NA, ncol(X), 4)
+results[,1] <- res$par
+results[,2] <- sqrt(diag(solve(-1 * res$hessian)))
+colnames(results) <- c("Estimate_hand", "SE_hand", "Estimate_canned", "SE_canned")
+rownames(results) <- c("Intercept","Female", "Age", "Education", "Informed")
+results
+
+# Compare the results with the glm function
+mlog <- glm(voted ~ female + age + edu + informed, 
+            data = turnout,
+            family="binomial")      # notice that last class this was different!
+results[,3] <- mlog$coefficients
+results[,4] <- diag(sqrt(vcov(mlog)))
+results
+
+```
+
+So, the results are the same! But, how do we interpret them? Interpretation of logit and probit models is not that straightforward. Before diving down let's see in R how the Probit and logit models are related. 
+
+### The Probit Model ###
+
+The probit model can be summarized by the following stochastic and systematic components
+$$
+\begin{split}
+Y &\sim Bernoulli(y_i|\pi_i) = \pi_i^{y_i}(1-\pi_i)^{1-y_i} \\
+\\
+\pi_i &= \Phi(X_i\beta) = \int_{-\infty}^{X_i\beta} \frac{1}{2\pi}e^{-\frac{Z^2}{2}}dZ
+\end{split}
+$$
+Where $\Phi(X_i\beta)$ is the commulative stadard normal cdf. It doesn't have a closed form solution, that is why we need to calculate it using numerical methods. The associated log-likelihood function is the following:
+
+$$
+ll(\beta | y, x) = \sum^n_{i=1}\left[y_i\ln\Phi(X_i,\beta)+(1-y_i)\ln\Phi(1-X_i\beta)\right]
+$$
+If you notice, it has a very similar form to the logit's log-likelihood function. In fact, the probit estimates are approximately 1.8 $\left(\frac{\pi}{\sqrt(3)}\right)$ times the logit estimates. The choice between probit and logit models has consequences since the distribution you choose matters, but differences between these two will be small. 
+
+```{r probit}
+mprob <- glm(voted ~ female + age + edu + informed, 
+            data = turnout,
+            family = binomial(link = "probit")) 
+
+comparison <- matrix(NA, 5, 3)
+comparison[,1] <- mlog$coefficients
+comparison[,2] <- mprob$coefficients
+comparison[,3] <- mlog$coefficients/(pi/sqrt(3))
+colnames(comparison) <- c("Logit", "Probit", "Logit/1.81")
+rownames(comparison) <- c("Intercept","Female", "Age", "Education", "Informed")
+comparison
+```
+
+## **Interpretation of Coefficients** ##
+
+There are multiple quantities of interest that you might want to calculate. For this lab we are going to focus on three, the odds ratio, the log-odds ration, the predicted probability and the marginal effects.
+
+### Odds ratio and log-odds ratio ###
+Logit coefficients are not easily interpretable by themsleves, that is why in most cases scholars and academics tend to show either predicted probabilities or log odd ratios. Odds are a way of understanding logit coefficients. For example, the probability of getting two tails after two throws is 0.25. But, it is the same as saying that the odds of two tails in two throws is 1:3. In other words, for every pair of tails we would expect 3 "failures" (Example taken from Wald and Ahlquist, 2018). Mathematically this means:
+$$
+odds(y_i=1) = \frac{Pr(y_i=1)}{1-Pr(y_i=1)} 
+$$
+Since the odds do not have an upper bound, sometimes is easier to use the log-odds to avoid very large results. If we exponentiate the estimates from the probit models we actually get the log odds of the relationship.
+$$
+log-odds(y_i=1) = log\left(\frac{Pr(y_i=1)}{1-Pr(y_i=1)} \right)
+$$
+*How to interpret odds?* 
+We need to have 1 as a reference point. Log odds lower than 1 imply the likelihood of the event decreases while coefficients larger than 1 imply that the likelihood is larger. So, if we have some odds of 1.53 means its 53% more likely and event occurs than it does not occur for a x unit change in the RHS variable. 
+
+```{r log_odds}
+# Let's exponentiate the numerical results
+exp(res$par)
+
+# But also the glm results
+exp(mlog$coefficients)
+
+# What is the relationship between being female and the probability of voting?
+exp(mlog$coefficients["female"])
+```
+However, one of the advantages of the logit model is that the probability is not constant but changes at different levels of the RHS variables. Which basically entail that we would need to calculate **conditional marginal effects**.
+
+### Expected Value or Predicted Probability Approach ###
+
+The expected value approach calculates the probability of a success, given certain characteristics of all the RHS variables. We can do this by using the "typical case" approach. Let's see how to do it in R.
+
+#### Typical Case Approach ####
+For the typical case approach, we just set the independent variables we are interested in to certain values of interest and the other varaibles to central tendencies (measn, modes, medians, etc)
+```{r typical case}
+# What is the probability that an 18 year old female, without education and uninformed about politics voted? There are three ways in R to do this:
+
+# 1. Using the results from our MLE and the plogis command
+# The plogis command just gives us the probability of the logistic distribution
+plogis(c(1,1,18,0,1)                          # vector of values for the RHS vars ORDER MATTERS!!!!!
+       %*% res$par)                           # vector of estimated coefficients
+
+# 2. using the glm results
+plogis(c(1,1,18,0,1) %*% coef(mlog))
+
+# 3. using the predict command
+predict(mlog,                                  # glm model
+        newdata = data.frame(female = 1,       # values for the other RHS variables
+                             age = 18, 
+                             edu = 0, 
+                             informed = 1),
+        type = "response")                     # Tells the command we want predicted probabilities
+
+# What would be the probability of voting for the average individual? 
+# I think there is not a good Mode function in R, so let's use the following. Why would the mode be important?
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# Predicted probability of the average individual
+predict(mlog,                                  
+        newdata = data.frame(female = Mode(turnout$female),       
+                             age = mean(turnout$age), 
+                             edu = mean(turnout$edu), 
+                             informed = Mode(turnout$informed)),
+        type = "response")
+# The probability of that a 45 year old female with some education and very informed about politics votes is 0.82.
+```
+## **Plotting Quantities of Interest** ##
+
+### Predicted Probabilities ###
+Let's first plot the predicted probability
+```{r plot}
+# LEt's estimate the predicted values
+x <- seq(18, 86, 1)
+y_f <- predict(mlog, newdata = data.frame(age = x, 
+                                        female=1, 
+                                        edu=1, 
+                                        informed=1), 
+             type = "response")
+y_m <- predict(mlog, newdata = data.frame(age = x, 
+                                        female=0, 
+                                        edu=1, 
+                                        informed=1), 
+             type = "response")
+
+plot(x, y_f, 
+     lwd = 1.5, col = "steelblue", type="l", 
+     ylim = c(0, 1), 
+     main = "Predicted Probability of Voting across Age",
+     xlab = "Age",
+     ylab = "Probability of Voting")
+lines(x, y_m, lwd = 1.5, lty=2,col = "red")
+
+legend("topleft",
+       horiz = TRUE,
+       legend = c("Female", "Male"),
+       col = c("steelblue", "red"), 
+       lty = c(1, 2))
+
+```
+
+### Marginal Effects ###
+Now, let's plot the marginal effects of age. The marginal effects of a logit model can be calculated as follows:
+
+$$
+\frac{\partial E[Y_i]}{\partial x_k}=\Lambda'(X_i\beta)\frac{\partial X_i\beta}{\partial x_k} = \lambda(X_i\beta)\frac{\partial X_k\beta}{\partial x_i}=\lambda(X_i\beta)\beta_k
+$$
+Where $\lambda$ is the height of the logistic pdf at a given point. Let's calculate the marginal effect of age for the "average" person in our dataset. If you remember is a woman with an average of 1.71 education units and very informed about politics. 
+```{r mg_ef}
+age_seq <- seq(18,86,1)
+n <- length(age_seq)
+av_person <- matrix(c(rep(1,n),            # Intercept recall the rep(a,b) command repeat value a b times
+                     rep(1,n),             # Female
+                     age_seq,              # Age
+                     rep(1.71,n),          # Education
+                     rep(3,n)),            # Informed  
+                   nrow = n, 
+                   ncol = 5, 
+                   byrow = F)               # We want to fill the matrix by columns, we could also use cbind here
+
+# Check hiw the av_person matrix is created
+av_person
+
+# Calculate the marginal effect with the given formula
+mgl_eff <- dlogis(av_person %*% coef(mlog)) * coef(mlog)["age"]
+
+# Plot the results
+plot(age_seq, mgl_eff, type = 'l', col = "orange",
+     main = "Marginal Effect of Age",
+     xlab = "Age", ylab = "Marginal Effect")
+```
+
+## **Additional Resources** ##
+1. I found this [site](https://www.econometrics-with-r.org/11-2-palr.html) useful for plotting purposes. You can make the plots a bit fancier with the code here. 
