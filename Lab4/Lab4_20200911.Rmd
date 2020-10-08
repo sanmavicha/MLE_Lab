@@ -1,0 +1,321 @@
+---
+title: "Lab 4: MLE and Tests"
+author: "Mateo Villamizar Chaparro"
+date: "Sept 11, 2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065)
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+3. The first **short paper** is due in two weeks
+
+## **The Poisson Distribution** 
+Let's calculate the MLE of a Poisson distribution analytically and numerically. Remember that the pdf of a Poisson distribution is $\frac{e^{(-\lambda)}\lambda^y}{y!}$. 
+
+1. Calculate the log-likelihood function of the distribution (which under iid observations is just the joint probability of the data). Recall that: $a=log(e^a)$, $log(ab) = log(a)+log(b)$ and $log \frac{a}{b} = log(a)-log(b)$
+$$
+\begin{split}
+L(\lambda|y) &= \prod_{i=1}^n \frac{e^{(-\lambda)}\lambda^{y_i}}{y_i!} \\
+\\
+ll(\lambda|y) &= ln\left(\prod_{i=1}^n \frac{e^{(-\lambda)}\lambda^{y_i}}{y_i!} \right) \\
+\\
+ll(\lambda|y) &= \sum_{i=1}^n \left(-\lambda + y_i ln \lambda-ln(y_i!) \right) \\
+\\
+&= \sum_{i=1}^n  y_i ln \lambda-\sum_{i=1}^nln(y_i!) -\sum_{i=1}^n\lambda  \\
+\\
+&= \sum_{i=1}^n  y_i ln \lambda-\sum_{i=1}^nln(y_i!) -\lambda n  \\
+\end{split}
+$$
+2. Derive the log-likelihood function with respect to the interest parameter $\lambda$. This is also known as the **score function**. Recall that $\frac{\partial ln(-3x)}{\partial x}=\frac{-3}{ln (-3x)}$
+
+$$
+\begin{split}
+S(\lambda) &= \frac{\partial ll(\lambda|y)}{\partial \lambda} \\
+\\
+&= \frac{\sum  y_i}{\lambda} - n
+\end{split}
+$$
+
+3. Set the score function equal to zero and derive the MLE.
+
+$$
+\begin{split}
+S(\lambda) = \frac{\sum  y_i}{\lambda} - n &= 0 \\
+\\
+\frac{\sum  y_i}{\lambda} &= n \\
+\\
+\hat \lambda &= \frac{\sum  y_i}{n}
+\end{split}
+$$
+
+4. Let's go one step further and try to calculate the variance of the estimator. For that we first need to derive the score function with respect to the parameters of interest. This would result in a matrix of second derivatives known as the **Hessian matrix**. In this particular case, we only have a $1\times1$ matrix since there is only one parameter of interest. But, under a multiple regression there would be a larger matrix. Think how this would look in the last exercise of this lab.  
+$$
+\begin{split}
+H(\lambda) &= \frac{\partial S(\lambda)}{\partial \lambda} = \frac{\partial\partial ll(\lambda|y)}{\partial \lambda\partial \lambda}\\
+\\
+&= \frac{-\sum y_i}{\lambda^2}
+\end{split}
+$$
+
+5. Now, calculate the **expected Fisher Information**,which is a function that measures the expected information of the curvature we can get for the likelihood function of our parameter. 
+$$
+\begin{split}
+\mathscr{I}(\lambda)&=-E[H(\lambda)] \\
+\\
+&= -E\left[ \frac{-\sum y}{\lambda^2} \right] = \frac{\sum y}{\lambda^2}
+\end{split}
+$$
+
+6. Calculate the variance of the MLE using the inverse of the Fisher Information. Recall that the mean of the Poisoon distribution is equal to the parameter lambda and hence $\lambda=\frac{\sum y}{n}$ 
+$$
+\begin{split}
+V(\hat\lambda) &= \mathscr{I}[\lambda]^{-1} = [-E[H(\lambda)]]^{-1} \\
+\\
+&= \left[ \frac{\sum y}{\lambda^2} \right]^{-1} \\
+\\
+&= \frac{\hat\lambda^2}{\sum y_i} = \frac{\hat\lambda^2}{n\hat\lambda}= \frac{\hat\lambda}{n}
+\end{split}
+$$
+7. Let's use R now.
+```{r pois}
+data("PhDPublications", package = "AER")          # Loading the dataset on PhD publications we used before
+Df1 <- PhDPublications                            # setting the dataset  
+y <- Df1$articles                                 # Recall that we said the articles variable follows a Poisson distribution, how would you check this?
+
+lambda <- matrix(NA, 2, 2)                        # Set a container matrix for the estimations
+colnames(lambda) <- c("Analytical", "Numerical")
+rownames(lambda) <- c("Mean", "Std. Error")
+
+# Analytical solution
+lambda[1,1] <- sum(y)/length(y)                   # Calculating the MLE
+lambda[2,1] <- sqrt(lambda[1,1]/length(y))        # Calculating the dtandard error
+
+# Numerical solution
+loglik <- function(lam,y){                        # creating the likelihood function
+  sum(y)*log(lam)-sum(log(factorial(y)))-length(y)*lam
+}
+
+StartingValues <- 1
+MLEResults <-  optim(par=StartingValues,          # Specify some starting values for the optimization process
+                     fn=loglik,                   # Call the objective function 
+                     y = y,                       # call our data
+                     method="BFGS",               # this is the approximation method, use this as default
+                     control=list(trace=T,maxit=1000,fnscale=-1), # sets some controls on the optimization like the max number of iterations and if fnscale is negative it maximizes the objective function check ?glm.control and ?glm
+                     hessian=TRUE)                # retrieve the hessian matrix
+
+lambda[1,2] <- MLEResults$par                     # Calling the results for lambda
+v_mle <- -diag(solve(MLEResults$hessian))         # calculating the variance
+lambda[2,2] <- sqrt(v_mle)                        # Calculating the standard error of the estimator 
+lambda
+```
+
+## **The linear Model in R under a MLE Framework**
+Let's keep working on other models and see how can we estimate them using an MLE framework. 
+
+### Bivariate normal regression ###
+
+In class we derived the log-likelihood of the normal distribution. For the bivariate case is:
+
+$$
+ll(\beta, \sigma^2|y, x) = \ln\left[ (2\pi\sigma^2)^{\frac{-n}{2}} exp \left(\frac{-1}{2\sigma^2}\sum_{i=1}^n (y-x\beta)^2 \right)\right]
+$$
+Let's calculate the MLE in R. 
+```{r lm, message=FALSE, warning=FALSE}
+# Setting the initial parameters
+set.seed(1234)
+y <- rnorm(100)
+x <- runif(100, 0, 100)
+
+# Defining the log likelihood function, here we are also setting sigma as a parameter of interest
+lm.lik <- function(theta, y, x) {
+  # set parameters
+  beta0 <- theta[1]
+  beta1 <- theta[2]
+  sigma2 <- theta[3]
+  # residual = y - y-hat
+  e <- y - beta1*x - beta0
+  # Log lik function
+  logl <- -1/2*log(2*pi) - 1/2*log(sigma2) - 1/2*(e^2/(2*sigma2))
+  logl <- sum(logl)
+  return(-logl)                         # notice here that we are retriving the negative log.lik to use optim later
+}
+
+stval <- c(1,1,1)
+res <- optim(par=stval, 
+             fn=lm.lik, 
+             y=y, 
+             x=x,
+             method = "BFGS",
+             hessian=TRUE)
+# Look that we are not using the control option in optim here. At the end you decide how you feel more comfortable calculating the optimization. Just be consistent between the construction of the function and the numerical optimization process. 
+
+res$par
+res$hessian
+```
+
+2. We can also use the **glm* function to make the estimation. This function helps to estimate generalized linear models and allows us to describe both the linear prediction and the distribution of the errors. It would be useful when calculating probit and logit models. Remember that the MLE and the OLS estimate are assymptotically the same. Let's see an example
+```{r glm}
+# Run a linear model
+m_lm <- lm(y ~ x)
+
+# Run a linear model using the glm function
+# ?glm shows the family of functions.
+# We are using the gaussian family of functions this time since we want a linear model
+# We are seeing this command in more detail in the next couple of labs
+m_glm <- glm(y ~ x, family = gaussian(link = "identity"))  # What is the (link=identity) telling us?
+
+# Look at the coeffcients
+x_coef <- matrix(NA, 2, 3)
+x_coef[,1] <- res$par[1:2]
+x_coef[,2] <- m_lm$coefficients[1:2]
+x_coef[,3] <- m_glm$coefficients[1:2]
+colnames(x_coef) <- c("Numerical", "LM", "GLM")
+rownames(x_coef) <- c("beta_0", "beta_1")
+x_coef
+```
+## **Conducting Likelihood Ratio Tests and Wald Tests** ##
+
+We will now use some of the WDI indicators to understand what are the macro variables associated with a larger number of refugees in 2015. For this, we are going to be using a linear model framework  
+
+```{r wdi, message=FALSE, warning=FALSE}
+# We would need two packages for this section
+library(WDI)                                      # Calls a package where we can download WDI ndicators
+library(lmtest)                                   # a package to run Wald and likelihood ratio tests
+
+# Some data wrangling
+wdi.df <- WDI(country = "all",
+              indicator = c("SM.POP.TOTL.ZS",     # Refugees as a percentage of the population
+                            "NY.GDP.PCAP.PP.CD",  # GDP per capita
+                            "NE.EXP.GNFS.ZS",     # Exports
+                            "SE.XPD.CTOT.ZS",     # Education expenditure
+                            "SH.XPD.CHEX.GD.ZS"), # Health expenditure   
+              start = 2015,
+              end = 2015, extra=T)                # The extra just add some addiitonal identifying variables 
+
+wdi.df <- subset(wdi.df, region != "Aggregates")
+wdi.df <- na.omit(wdi.df)
+names(wdi.df)[4:8] <- c("p_refugees", "gdp", "exports", "exp_educ", "exp_health")
+
+# Some models we want to choose from
+m0 <-  glm(log(p_refugees) ~ log(gdp), family = gaussian(link = "identity"), data = wdi.df)
+m1 <-  glm(log(p_refugees) ~ log(gdp) + exports, family = gaussian(link = "identity"), data = wdi.df)
+m2 <-  glm(log(p_refugees) ~ log(gdp) + exports + exp_health + exp_educ, family = gaussian(link = "identity"), data = wdi.df)
+```
+
+### Likelihood Ratio Test ###
+
+The Likelihood ratio test is used to compare nested models. That is, models that come from the same data but can be obtained by imposing or relaxing restrictions in the parameters. For instance, models m0, m1 and m2 are all nested in m2. It gives us information about how adding or removing restrictions makes the model a better fit for the data. We will need to assume when comparing likelihoods that one model is indeed the true or the global model. 
+
+$H_o:$ restricted model =  global model
+
+$H_a:$ restricted model $\neq$  global model
+
+$$
+R = -2 \frac{ll(\hat\theta_r|y)}{ll(\hat\theta_g|y)} = -2[ll(\hat\theta_r|y)-ll(\hat\theta_g|y)] \sim \chi^2_{(df_g-df_r)}
+$$
+When conducting a likelihood ratio test the denominator should always be the model with *more* parameters.
+```{r lr}
+pchisq(-2*(logLik(m0) - logLik(m1)), df = 1, lower.tail = F) # Calculating the test manually
+lrtest(m0, m1)                                               # Using the lmtest package
+
+# What are these tests doing?
+cord.x <- c(4.52,seq(4.52,10,0.01),10)                       # Generating the x coordinates for the shaded region
+cord.y <- c(0,dchisq(seq(4.52,10,0.01),1),0)                 # Generating the y coordinates for the shaded region
+# Remember to run the next four lines at the same time
+curve(dchisq(x, 1), 0, 10,
+      xlab="LR statistic", ylab="", main="Chi-squared (df=1)")
+polygon(cord.x,cord.y,col='red')
+abline(h=0, col="black")
+abline(v=4.52, lty="dashed")
+
+# Let's compare the other models among themselves
+pchisq(-2*(logLik(m1) - logLik(m2)), df = 1, lower.tail = F)
+lrtest(m1, m2)
+
+pchisq(-2*(logLik(m0) - logLik(m2)), df = 2, lower.tail = F)
+lrtest(m0, m2)
+```
+After running these tests, which model would you choose?
+
+### Wald Test ###
+Think about Wald tests as a generalized version of the t-test when dealing with one parameter or the F-test when dealing with multiple parameters at the same time. Hence, when conducting this test it means we are looking at individual and global significance of estimates and restrictions in our models. 
+
+1. One parameter case
+
+Here we are trying to compare the estimate of one parameter with a given value. It is usually zero, but you can also test other values that might be theoretically valid or interesting.
+
+$H_o: \hat\theta_j=\theta_j^0$
+
+$H_a: \hat\theta_j \neq \theta_j^0$
+
+$$
+W = \frac{(\hat\theta_j-\theta_j^0)^2}{\hat\sigma^2_j} \sim \chi^2_{(1)}
+$$
+Is the coefficient for the percentage of national income spent in health = 0.1?
+```{r wald1}
+W <- (coef(m2)["exp_health"]-0.1)^2/vcov(m2)[4,4]
+pchisq(W, 1, lower.tail = F)
+```
+Is the coefficient for the GDP per capita different from zero? Check the results from here with the *summary* command. There should be similar. 
+```{r wald2}
+W <- (coef(m2)["log(gdp)"])^2/vcov(m2)[2,2]
+pchisq(W, 1, lower.tail = F)
+summary(m2)
+```
+If we assume that the dependent variable is normally distributed and that $\hat\sigma^2$ is unbiased we can calculate the Wald test as:
+$$
+W = \frac{(\hat\theta_j-\theta^0_j)}{\hat\sigma_j} \sim t_{(n-k)}
+$$
+Which is the t-test we are used to conduct under a basic OLS framework.
+
+2. The more general case
+
+Here we want to calculate the Wald test in a more general way. This means construct it in a way where we could be able to conduct multiple tests at the same time. The model we are studying right now is m2, which contains 5 parameters $\hat\theta=[\hat\theta_0\quad\hat\theta_1\quad\hat\theta_2\quad\hat\theta_3\quad\hat\theta_4]$. The intercept and the four right hand side variables. Now, we are going to use the wald test to test the following linear restrinctions:
+
+  + $\theta_1=1$
+  + $\theta_3 - \theta_4=0$
+  
+Which in plain English say that the effect of 1% change of the GDP per capita is correlated with a 1% increase in the percentage of refugees. Similarly, the second restriction implies that the difference between the expenditure in health and education is zero. We can construct a system of equations with the given information.
+$$
+R = \begin{bmatrix} 0 & 1 & 0 & 0 & 0 \\ 0 & 0 & 0 & 1 & -1 \end{bmatrix}; \quad r=\begin{bmatrix} 1 \\ 0\end{bmatrix}
+$$
+And thus we can represent our linear restrictions as $R\hat\theta=r$. For the test, we would like to compare the following hypothesis (where $\hat\theta$ is a vector of estimated coefficients):
+
+$H_o: R\hat\theta - r =0$
+
+$H_a: R\hat\theta - r \neq 0$
+
+The estimate we need to calculate is:
+$$
+W = (R\hat\theta - r)'(R(\hat V)R')^{-1}(R\hat\theta - r) \sim \chi^2_{(h)}
+$$
+Where $h$ is the number of restrictions
+
+```{r wald4}
+R <- matrix(c(0,1,0,0,0,0,0,0,1,-1), 2,5)                        # Constructing the R matrix
+r <- matrix(c(1,0), 2, 1)                                        # Constructing the r vector
+thetas <- coef(m2)                                               # Calling the coeeficientes from model 2
+V <- vcov(m2)                                                    # Calling the variance covariance matrix
+W <- t(R%*%thetas-r) %*% solve(R%*%V%*%t(R)) %*% (R%*%thetas-r)  # calculating the Wald statistic
+pchisq(W, 2, lower.tail = F)                                     # Compare W with a chisq distribution with 2 df
+```
+
+### Score Test ###
+
+This is another test to evaluate MLE models. In this case, it tests the difference between the slopes of tangent lines between the estimate and the value we want to test it against. The null hypothesis here implies that the slopes are the same.This is a less common test. 
+
+$H_o: \hat\theta_j - \theta^* =0$
+
+$H_a: \hat\theta_j - \theta^*  \neq 0$
+
+The estimate we need to calculate is:
+$$
+ST = \frac{S(\theta_j)}{\sqrt{\mathscr{I}(\theta_j)}} \sim N(0,1)
+$$
+
+
+
+
