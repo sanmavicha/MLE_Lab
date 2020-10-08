@@ -1,0 +1,505 @@
+---
+title: 'Lab 7: Ordered Outcome Models'
+author: "Mateo Villamizar Chaparro"
+date: "October 2, 2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab7")  # change this for your own working directory!
+library(stargazer)
+library(tidyverse)
+library(MASS)
+```
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065)
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+
+## **Common Mistakes from PS 1** ##
+1. *Differences between predicted values and expected probabilities*: Predicted values for a binary model are one simulated draw from the stochastic component of the model given a set of characteristics that are interesting for the researcher. The expected probability is an average over the whole distribution of draws from the stochastic component. 
+
+2. *Identifying the distribution of exam results as a Bernoulli(p)*: Remember that a $Bernoulli(p)$=$Binomial(1,p)$. When you refer to a Binomial you assume it is a Bi(n,p) which is not a Bernoulli when $n>1$. If we had how many times people voted in a period of time, then a Binomial(n,p) could be a good approximation if you believe the probability of voting is the same across the different elections. So, those who did not explain
+
+## **Today's dataset** ##
+For todays class we are going to use the "lab7.csv" file in sakai. The file contains information for an online omnibus survey launched in April 2019. The survey had information about US citizen's perceptions on a hypothetical program that would help migrants relocate and work in the respondent's county after a natural disaster. The survey also camptured other individual characteristics and political attitutudes of the respondents. The list of variables is as follows:
+
+  + **mig_exp_revcod**: how likely are respondats to support the relocation policy
+  + **emp**: employment status
+  + **mig_visas**: How likely are respondents to support visas for immigrants 1-7 scale where 7 is strongly oppose
+  + **democrat, republican**: partisanship of the respondent. Base category: independent.
+  + **white, black, hispanic**: self-identification racial question. People could self identify as multiple ethnicities.
+  + **edu**: education categories
+  + **inc**: income categories
+  + **age**: age of the respondent
+
+```{r loading}
+final <- read.csv("lab7.csv")
+# summary(final)
+```
+
+```{r sum_stats, results='asis'}
+stargazer::stargazer(final, header = F,  type = 'html')
+```
+
+## **Ordered Outcome Models** ##
+### *What are ordinal variables?* ###
+
+   + Variables that define categories
+   + Variable that are ordered along one category
+   + The exact difference betwen categories is unknown (How much is the difference between slightly agree and agree?)
+   + The best example for ordinal variables are always likert or support scales like the one in today's dataset.
+   
+```{r, include=FALSE}
+# Here is code for a basic histogram
+hist(final$mig_exp_revcod, 
+     main = "Level of Support for \n Relocation Program", 
+     xlab = "", 
+     xaxt = 'n', col = "orange",
+     breaks=rep(1:7,each=2)+c(-.4,.4))
+axis(side = 1, at = final$mig_exp_revcod, col = NA, col.ticks = 0)
+```
+
+```{r hist}
+# Using basic R
+hist(final$mig_exp_revcod, 
+     main = "Level of Support for \n Relocation Program", 
+     xlab = "", 
+     xaxt = 'n', col = "orange")
+labels <- c("Strongly \n Oppose", "Moderately \n Oppose", "Slightly \n Oppose", 
+                              "Nor-Nor", "Slightly \n Support", "Moderately \n Support", "Strongly \n Support")
+axis(side = 1, labels = FALSE)
+text(x = 1:7,                      # Number of labels
+     y = par("usr")[3] - 20,       # move labels to the bottom of the plot see ?par
+     labels = labels,              # names for the labels
+     xpd = NA,                     # Change the regioin where the axis is going to show see ?xpd
+     srt = 0,                      # Degrees of rotation
+     adj = 0,                      # How below to start, it is a position argument
+     cex = 0.8)                    # Font size
+
+# Using ggplot
+labels <- c("Strongly \n Oppose", "Moderately \n Oppose", "Slightly \n Oppose", "Nor-Nor", "Slightly \n Support", "Moderately \n Support", "Strongly \n Support")
+ggplot(final, aes(x = mig_exp_revcod)) + geom_bar(fill = "orange") + 
+  scale_x_discrete(limits = c("1", "2", "3", "4", "5", "6", "7"),
+                   labels = labels) +
+  labs(title = "Level of Support for Relocation Program",
+       x = "Support",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+These types of variables can also be treated by:
+
+  + **Dichotomozing the variable of interest:** easier to estimate and interpret; estimates are more consistent. BUT, we lose efficiency and the selection of attributes is very subjective
+  + **Estimate the model using OLS:** easier to estimate and interpret. It could be a good approach if your variable is approximately equidistant, has many values and is not skewed. BUT, the model is wrong since we would have predicitons out of bounds and the model is heteroskedastic.
+  
+### *How the model is constructed* ###
+
+The easier way to understand the estimation of ordered models is thinking as if we had a latent variable problem. For this, we need to estimates the cutoffs of the latent varaible as well as the probabilities for each cutoff. This is why when calculating ordered models you would calculate two sets of parameters: the coefficients for the model $\beta_i$ and the cut-off points $\tau_i$. The model for the latent can be explained by its stochastic and systematic components as follows:
+
+$$
+\begin{split}
+Y_i^* &\sim P(y_i^*|\mu_i) \\
+\mu_i &= X_i\beta
+\end{split}
+$$
+However, we observe that:
+
+$$
+y_{ij} = \left\{ 
+\begin{array}{ll}
+      1 & \tau_{j-1,i}\leq y_i^*< \tau_{j,i} \\
+      0 & Otherwise \\
+\end{array} 
+\right.
+$$
+
+For our relocation program support variable is exactly the same as saying that:
+$$
+\begin{split}
+y_i=StronglyOppose &\Leftrightarrow \tau_0 \leq y_i^* < \tau_1 \\
+y_i=ModeratelyOppose &\Leftrightarrow \tau_1 \leq y_i^* < \tau_2 \\
+y_i=SlighltyOppose &\Leftrightarrow \tau_2 \leq y_i^* < \tau_3 \\
+y_i=NorNor &\Leftrightarrow \tau_3 \leq y_i^* < \tau_4 \\
+y_i=SlighltySupport &\Leftrightarrow \tau_4 \leq y_i^* < \tau_5 \\
+y_i=ModeratelySupport &\Leftrightarrow \tau_5 \leq y_i^* < \tau_6 \\
+y_i=StronglySupport &\Leftrightarrow \tau_6 \leq y_i^* < \tau_7 \\
+\end{split}
+$$
+
+We usually assume that $\tau_0=0$ (as a way to identify the model) and $\tau_{J+1}=\infty$. Given the information so far, we can derive the probability of the $i^{th}$ observation. 
+
+$$
+\begin{split}
+Pr(Y_i=j) = Pr(Y_{ij}=1)&=Pr(\tau_{j-1,i} \leq y_i^* < \tau_{j,i}) \\
+&=Pr(\tau_{j-1,i} \leq X_i\beta + \epsilon < \tau_{j,i}) \\
+&=Pr(\tau_{j-1,i}- X_i\beta \leq \epsilon < \tau_{j,i}+X_i\beta) \\
+&= \int_{\tau_{j-1,i}- X_i\beta}^{\tau_{j,i}+X_i\beta} \epsilon \quad d\epsilon \\
+&= F(\tau_{j,i}-X_i\beta) - F(\tau_{j-1,i}-X_i\beta)
+\end{split}
+$$
+
+Here **F** is a cummulative density distribution (either a logistic or a normal density function). However, this is the probability of only one of our categories, and we have 7 of them. In order to calcualte this, we create a new indicator variable $y_{ij}$ that is equal to 1 when the respondent chose that category and 0 otherwise. Thus, for an indvidual in today's dataset that strongly opposed the program is:
+
+$$
+\begin{split}
+Pr(y_{StrOP,i} =1) &= Pr(y_{StrOp,i}=1)^1 \times Pr(y_{ModOP,i}=1)^0 \times Pr(y_{SliOpi}=1)^0 \\
+& \times Pr(y_{NN,i}=1)^0 \times Pr(y_{SliSup,i}=1)^0 \times Pr(y_{ModSup,i}=1)^0 \\
+& \times Pr(y_{StrSup,i}=1)^0 \\
+\end{split}
+$$
+More specifically:
+
+$$
+\begin{split}
+Pr(y_{StrOP,i} =1) &= (F(\tau_{StrOp,i}+X_i\beta) - 0)^1 \\
+&\times (F(\tau_{ModOp,i}+X_i\beta) - F(\tau_{StrOp,i}-X_i\beta))^0 \\ 
+&\times (F(\tau_{SliOp,i}+X_i\beta) - F(\tau_{ModOp,i}-X_i\beta))^0 \\
+&\times (F(\tau_{NorNor,i}+X_i\beta) - F(\tau_{SliOp,i}-X_i\beta))^0 \\ 
+&\times (F(\tau_{SliSup,i}+X_i\beta) - F(\tau_{NorNor,i}-X_i\beta))^0 \\ 
+&\times (F(\tau_{ModSup,i}+X_i\beta) - F(\tau_{SliSup,i}-X_i\beta))^0 \\
+& \times (1-F(\tau_{StrSup,i}+X_i\beta))^0 \\
+\end{split}
+$$
+
+Which is equivalent to:
+$$
+Pr(y_{j,i} =1) = \prod_{j=1}^J Pr(y_{ij}=1)^{y_{ji}} 
+$$
+But, we have 663 (N) individuals in our data, thus we need to multiply this probability for the number of people in our dataset to get the likelihood function. Hence:
+$$
+L(\beta, \tau |X,Y) = \prod_{i=1}^N\prod_{j=1}^J Pr(y_{ij}=1)^{y_{ji}}
+$$
+
+Calculating the log-likelihood:
+
+$$
+ll(\beta, \tau |X,Y) = \sum_{i=1}^N\sum_{j=1}^J y_{ji} \ln (Pr(y_{ij}=1))
+$$
+For the specifics of our dataset
+
+$$
+ll(\beta, \tau |X,Y) = \sum_{i=1}^{663}\sum_{j=1}^7 y_{ji} \ln (Pr(y_{ij}=1))
+$$
+
+
+## **Calculated Ordered Models in R** ##
+
+### Calculations generating our own likelihood function ###
+
+```{r models, warning=FALSE}
+y <- final$mig_exp_revcod
+X <- with(final, cbind(emp, mig_visas, democrat, republican, white, black, hispanic, edu, female, inc, age))
+
+# Create the matrix of indicator variables
+y0 <- sort(unique(y))                                         # Vector of numerical categories
+J <- length(unique(y))                                        # Total number of categories
+Y_ji <- matrix(NA, nrow = length(y), ncol = J)                # Empty matrix for indicator varaibles
+for (j in 1:J){                                               # What is this loop doing?
+  Y_ji[,j] <- y==y0[j]
+}
+head(Y_ji)
+
+# Let's create the ikelihood function
+ll_oprobit <- function(theta, Y_ji, X){                       # inputs theta_Mx(k+J)
+  J <- dim(Y_ji)[[2]]                                         # number of categories
+  beta <- theta[1:ncol(X)]                                    # vector of coefficients
+  tau <- theta[(ncol(X)+1) : (ncol(X)+(J-1))]                 # vector of cutoffs
+  ystar <- X %*% beta                                         # linear prediction
+  probs <- matrix(NA, nrow = nrow(ystar), ncol = J)           # calculating the probability at each cut-off point
+  probs[,1] <- pnorm(tau[1]-ystar)                            # 1st category
+  for (j in 2:(J-1))
+    probs[,j] <- pnorm(tau[j]-ystar) - pnorm(tau[j-1]-ystar)
+  probs[,J] <- 1-pnorm(tau[J-1]-ystar)                        # last category
+  ll <- sum(log(probs[Y_ji]))
+  return(-ll)
+}
+
+# Optimizing the function
+stval <- c(rep(0,ncol(X)),0:(J-2))                           # Be careful with the parenthesis
+res <- optim(stval, ll_oprobit, Y=Y_ji, X=X, method="BFGS", hessian=T)
+# As you already know, there might be some NAs calculated, but we can still do the optimization process
+
+betas <- res$par[1:ncol(X)]
+tau <- res$par[(ncol(X)+1):(ncol(X)+(J-1))]
+
+p <- dim(X)[2]+J-1 
+n <- dim(X)[1]
+AIC <- 2*res$value+2*p
+BIC <- 2*res$value+p*log(n)
+AIC; BIC
+
+```
+
+### Calculations with canned function - polr ###
+
+Now, let's do the calculation using the canned function
+
+```{r canned}
+m1 <- polr(as.factor(mig_exp_revcod) ~ emp+ mig_visas+ democrat+ republican+ white+ black+ hispanic+ edu+ female+ inc+ age,
+           data=final,
+           method = "probit",                     # the default is the logistic
+           Hess=T)
+summary(m1)
+```
+As always, let's compare the results:
+```{r comparison}
+coeffs <- matrix(NA, ncol(X), 2)
+coeffs[, 1] <- round(betas, 3)
+coeffs[,2] <- round(coef(m1), 3)
+rownames(coeffs) <- c("emp", "mig_visas", "democrat", "republican", "white", "black", "hispanic", "edu", "female", "inc", "age")
+colnames(coeffs) <- c("LL Function", "Canned")
+coeffs
+
+cutoffs <- matrix(NA, (J-1), 2)
+cutoffs[, 1] <- round(tau, 3)
+cutoffs[,2] <- round(m1$zeta, 3)               # When using the canned functions your can call the taus with $zetas 
+rownames(cutoffs) <- c("1|2", "2|3", "3|4", "4|5", "5|6", "6|7")
+colnames(cutoffs) <- c("LL Function", "Canned")
+cutoffs
+```
+
+
+### Calculating Quantities of Interest ###
+
+If you use a logit link in the systematic component of your model, then you can also calculate the log-odds ratio in a similar way as we say for binary dependent variables. 
+
+#### Predicted Probabilities #####
+
+The logic behind calculating the predicted probabilities is the same as in the logit case. AS always, let's calculate the quantities of interest using a typical case and and observed value approach.
+```{r}
+# Using the by-hand results
+# Recall our parameters
+betas <- res$par[1:ncol(X)]
+tau <- res$par[(ncol(X)+1):(ncol(X)+(J-1))]
+
+# Typical case approach
+# Calculate the predicted probability of responding "Strongly Support" for the average individuals
+x <- apply(X, 2, mean)
+pp <- 1 - pnorm(tau[6] - betas %*% x)
+round(mean(pp),3)
+
+# Calculate the predicted probability of responding "Strongly Support" for the typical individuals
+x <- c(0,                              # Employment status
+       median(final$mig_visas),        # Mig visas
+       0,                              # Democrat
+       0,                              # Republican
+       1,                              # White
+       0,                              # Black
+       0,                              # Hispanic
+       median(final$edu),              # Education
+       1,                              # female
+       mean(final$inc),                # Income
+       mean(final$age))                # Age
+pp <- 1 - pnorm(tau[6] - betas%*%(x))
+round(mean(pp),3)
+
+# Predicted Probability for Each observation in the dataset to respond atrongly support
+pp <- 1 - pnorm(tau[6] - X %*% betas)
+
+# Expected value for responding "Strongly Support"
+round(mean(pp),3)
+
+# Observed value approach: let's calculate the probability of being employed in the support for the localization program
+x <- X
+x[, "emp"]<- 1
+pp <- 1 - pnorm(tau[6] - x %*% betas)
+round(mean(pp),3)
+
+# Using the canned functions predict and the result from polr
+# Typical Case Approach
+NewData <- data.frame(emp=0,
+                      mig_visas=median(final$mig_visas),
+                      democrat=0,
+                      republican=0,
+                      white=1,
+                      black=0,
+                      hispanic=0,
+                      edu=median(final$edu),
+                      female=1,
+                      inc=mean(final$inc),
+                      age=mean(final$age))
+predict(m1, newdata = NewData, type = "probs")          # Here we get a vector of predicted probability for each category
+
+# Observed Value Approach
+X2 <- model.matrix(m1)[ ,-1]                           # When using the canned functions, be careful when calling the model matrix since it has a column for the intercept, thus we need to take that one out.
+head(predict(m1, newdata = X2, type = "probs")) # calculates the probability of selecting each category
+pp <- apply(predict(m1, newdata = X2, type = "probs"), 2, mean)
+round(pp,3)
+
+# What are the predicted probabilities for people who oppose giving visas to immigrants?
+X2 <- model.matrix(m1)[ ,-1]  
+X2[ ,"mig_visas"] <- 5
+pp <- apply(predict(m1, newdata = X2, type = "probs"), 2, mean)
+round(pp,3)
+
+```
+
+**Food for thought:** In the manual example, we calcualted the last category for convenience purposes. How would you calculate the predicted probability of a mid-category?
+
+2. Simulating Uncertainty using our optimization results
+
+```{r}
+set.seed(1234)
+Sims <- mvrnorm(1000, mu = res$par, Sigma = solve(res$hessian))
+
+beta <- Sims[, 1:ncol(X)]
+tau <- Sims[, (ncol(X)+1):(ncol(X)+(J-1))]
+
+x <- apply(X, 2, mean)
+pp <- 1 - pnorm(tau[,6] - beta %*% x)
+mean(pp)
+quantile(pp, c(0.025, 0.975))
+
+hist(pp, 
+     main = "Predicted Probability for \n Strong Support to the Relocation Program",
+     xlab = "First Difference")
+abline(v = mean(pp), col = "#CC0066", lwd = 4)
+abline(v = quantile(pp, 0.025), col = "#CC00660F", lwd = 3)
+abline(v = quantile(pp, 0.975), col = "#CC00660F", lwd = 3)
+
+```
+
+#### First Difference #####
+Let's see what is the first difference in support of the program for those individuals who strongly support and strongly oppose giving vsas for immigrants. 
+```{r}
+# Typical Case Approach using the canned functions
+NewData1 <- data.frame(emp=0,
+                      mig_visas=5,
+                      democrat=0,
+                      republican=0,
+                      white=1,
+                      black=0,
+                      hispanic=0,
+                      edu=median(final$edu),
+                      female=1,
+                      inc=mean(final$inc),
+                      age=mean(final$age))
+NewData2 <- data.frame(emp=0,
+                      mig_visas=1,
+                      democrat=0,
+                      republican=0,
+                      white=1,
+                      black=0,
+                      hispanic=0,
+                      edu=median(final$edu),
+                      female=1,
+                      inc=mean(final$inc),
+                      age=mean(final$age))
+fdiff <- predict(m1, newdata = NewData2, type = "probs") - predict(m1, newdata = NewData1, type = "probs")
+round(mean(fdiff),3)
+
+# Food for thought: How would you calculate this quantity of interest using the optimization results?
+
+# Observed Value Approach using canned functions
+x <- model.matrix(m1)[ ,-1]
+x[, "mig_visas"] <- 5
+pp0 <- 1 - pnorm(tau[,6] - beta %*% t(x))
+pp0 <- apply(pp0, 1, mean)
+x[, "mig_visas"] <- 1
+pp1 <- 1 - pnorm(tau[,6] - beta %*% t(x))
+pp1 <- apply(pp1, 1, mean)
+mean(pp0); mean(pp1)
+
+fdiff <- (pp1 - pp0)*100
+round(mean(fdiff),3)
+
+# Observed Value Approach using the optimization inputs/results
+x <- X                                
+x[, "mig_visas"] <- 5
+pp0 <- 1 - pnorm(tau[,6] - beta %*% t(x))
+pp0 <- apply(pp0, 1, mean)
+x[, "mig_visas"] <- 1
+pp1 <- 1 - pnorm(tau[,6] - beta %*% t(x))
+pp1 <- apply(pp1, 1, mean)
+mean(pp0); mean(pp1)
+
+fdiff <- (pp1 - pp0)*100
+round(mean(fdiff),3)
+# Let's calculate uncertainty for the first difference using the canned functions
+fd_mat<-matrix(NA, 7,3)
+x0 <- x1 <- X                                
+x0[, "mig_visas"] <- 5
+x1[, "mig_visas"] <- 1
+fd_mat[,1] <- apply(predict(m1, newdata = x1, type = "probs") -
+                      predict(m1, newdata = x0, type = "probs"),
+                    2, mean)
+# Let's calculate the uncertainty now
+# Recall our simmulated data
+
+# First let's create a matrix of predicted taus coming from the simmulations
+taupred <- array(NA, c(1000, 8))                                       # Container array nSimsX(J+1), we need an array to include the infinite
+taupred[ ,1] <- -Inf                                                   # Minimum value of tau
+taupred[ ,8] <- Inf                                                    # Maximum value of tau
+taupred[ ,2:7] <- tau                                                  # our simulated taus
+head(taupred)
+
+fd <- list()
+for(i in 1:7) {
+  fd[[i]] <- rowMeans(apply(x1, 1, function(data_mat) pnorm(taupred[ ,i+1] - beta %*% data_mat) -
+                              pnorm(taupred[ ,i] - beta %*% data_mat))) -
+    rowMeans(apply(x0, 1, function(data_mat) pnorm(taupred[ ,i+1] - beta %*% data_mat) -
+                     pnorm(taupred[ ,i] - beta %*% data_mat)))
+}
+fd_mat[,2] <- sapply(fd, function(z) quantile(z, 0.025))
+fd_mat[,3] <- sapply(fd, function(z) quantile(z, 0.975))
+
+plot(fd_mat[1:7], 1:7, xlab = "First Difference in Support", 
+     ylab = "", main = "First Difference in \n Support to Relocation Program",
+     pch = 16, ylim = c(0.0, 7), xlim = c(-0.9, 0.7), axes = F)
+axis(1, c(-0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6))
+axis(2, 1:7, labels = c("Strongly Oppose", "Moderately Oppose",
+                        "Slightly Oppose", "Neither support nor oppose",
+                        "Slightly support", "Moderately support",
+                        "Strongly support"),
+     las = 1, pos = -0.35)
+segments(fd_mat[8:14], 1:7, fd_mat[15:21], 1:7)
+segments(x0=0,y0=0,x1=0,y1=3.3,col="black", lty=2)
+
+
+```
+
+### Measures of Fit ##
+We can use the same measures of fit for the ordinal variable models as in the binary models from last wek. 
+```{r}
+MeasFit <- matrix(NA, 4,1)
+rownames(MeasFit) <- c("pcp", "pmp", "pre", "epcp")
+colnames(MeasFit) <- c("Values")
+
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# PCP
+pcp <- mean(predict(m1, type = "class") == y)
+MeasFit[1] <- pcp 
+# 36% of the time, the model guess is the observed value. In-sample prediction is 36%
+
+# PRE
+pmp <- mean(y == Mode(y))
+MeasFit[2] <- pmp 
+# the mode, which guesses 4 every time, is correct 24% of the time
+
+pre <- (pcp - pmp) / (1 - pmp)
+MeasFit[3] <- pre 
+# we have a proportionate reduction in error of 16%
+
+## ePCP (punishes those that predict with low probabilities)
+pp <- matrix(NA, 7,1)
+for(i in 1:7) { # for each category in the DV
+  pp[i,1] <- sum(predict(m1, type = "probs")[y == i, i])
+}
+epcp <- sum(p) / length(y)
+MeasFit[4] <- epcp
+
+round(MeasFit, 2)
+```
+
+## **Additional Resources** ##
+
+   + [Data Visualization in R](https://rkabacoff.github.io/datavis/)
+   + Prof. Stegmueller has mentioned the [Delta Method](https://www.statlect.com/asymptotic-theory/delta-method) multiple times. 
