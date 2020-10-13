@@ -1,0 +1,415 @@
+---
+title: "Lab 8: Nominal Dependent Variables"
+author: "Mateo Villamizar Chaparro"
+date: "October 2, 2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab8")  # change this for your own working directory!
+library(AER)
+library(MASS)
+library(VGAM)
+library(mlogit)              
+library(tidyverse)
+library(nnet)
+```
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065)
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+
+## **Plotting results from a First Difference Ordinal Model**
+Before starting the new topic, let's finish the code for the first difference plot in the ordinal variable case. Rememebr here is the difference between respondents who highly support visas for migrants vs those who don't. The dependent variable is the level of support of a migrant relocation program. 
+```{r}
+final <- read.csv("lab7.csv")
+y <- final$mig_exp_revcod
+X <- with(final, cbind(emp, mig_visas, democrat, republican, white, black, hispanic, edu, female, inc, age))
+
+
+m1 <- polr(as.factor(mig_exp_revcod) ~ emp+ mig_visas+ democrat+ republican+ white+ black+ hispanic+ edu+ female+ inc+ age,
+           data=final,
+           method = "probit",                     # the default is the logistic
+           Hess=T)
+
+
+# Calculating Uncertainty
+set.seed(1234)
+mu <- c(m1$coefficients, m1$zeta)
+J <- length(unique(final$mig_exp_revcod))
+Sims <- mvrnorm(1000, mu = mu, Sigma = solve(m1$Hessian))
+
+# Create the holders for the simmulated coefficients
+beta <- Sims[, 1:ncol(X)]
+tau <- Sims[, (ncol(X)+1):(ncol(X)+(J-1))]
+
+
+# Let's calculate uncertainty for the first difference using the canned functions and a placeholder
+# matrix for the coeffcients and its confidence intervals
+fd_mat<-matrix(NA, 7,3)
+x0 <- x1 <- X                                
+x0[, "mig_visas"] <- 5
+x1[, "mig_visas"] <- 1
+fd_mat[,1] <- apply(predict(m1, newdata = x1, type = "probs") -
+                      predict(m1, newdata = x0, type = "probs"),
+                    2, mean)
+# Let's calculate the uncertainty now
+
+# First let's create a matrix of predicted taus coming from the simmulations
+taupred <- array(NA, c(1000, 8))                                       # Container array nSimsX(J+1), we need an array to include the infinite
+taupred[ ,1] <- -Inf                                                   # Minimum value of tau
+taupred[ ,8] <- Inf                                                    # Maximum value of tau
+taupred[ ,2:7] <- tau                                                  # our simulated taus
+head(taupred)
+
+# Second, calculate confidence intervals
+fd <- list()
+for(i in 1:7) {
+  fd[[i]] <- rowMeans(apply(x1, 1, function(data_mat) pnorm(taupred[ ,i+1] - beta %*% data_mat) -
+                              pnorm(taupred[ ,i] - beta %*% data_mat))) -
+    rowMeans(apply(x0, 1, function(data_mat) pnorm(taupred[ ,i+1] - beta %*% data_mat) -
+                     pnorm(taupred[ ,i] - beta %*% data_mat)))
+}
+# Given the placeholder here is a list, is better to calculate the CI independently
+fd_mat[,2] <- sapply(fd, function(z) quantile(z, 0.025))
+fd_mat[,3] <- sapply(fd, function(z) quantile(z, 0.975))
+
+# Third, lets put everything together
+plot(fd_mat[1:7], 1:7, xlab = "First Difference in Support", 
+     ylab = "", main = "First Difference in \n Support to Relocation Program",
+     pch = 16, ylim = c(0.0, 7.3), xlim = c(-0.9, 0.7), axes = F,
+     col = "#CC0066")
+# Axis parameters
+axis(1, seq(-0.4, 0.7, 0.1))
+axis(2, 1:7, labels = c("Strongly Oppose", "Moderately Oppose",
+                        "Slightly Oppose", "Neither support nor oppose",
+                        "Slightly support", "Moderately support",
+                        "Strongly support"),
+     las = 1, pos = -0.5)
+# Confidence intervals
+segments(fd_mat[, 2], 1:7, fd_mat[,3], 1:7, col = "#CC0066")
+# Dashed line at zero
+segments(x0=0,y0=0,x1=0,y1=7.3,col="black", lty=2)
+
+```
+
+## **First dataset: ANES 2016** ##
+First we are going to use the "lab8" dataset. This data contains information extracted from the 2016 ANES. We are going to study the choice among democratic candidates for the 2016 elections in the United States. Here is the list of variables:
+
+  + **female:** Equal to 1 if the respondent self-identified as a female
+  + **demcand:** Choice of democratic candidate. 1: Clinton, 2: O'Malley and 3. Sanders
+  + **age:** Respondent's age
+  + **educ:** Respondent's level of education
+  + **ftobama:** Feeling thermometer towards Obama
+  + **candideol:** How liberal is the candidate
+  + **candgen:** gender of the candidate
+  + **Liberal:** How liberal is the respondent
+  + **id:** individual id
+  
+```{r dataset}
+anes <- read.csv("lab8.csv", header = T)
+
+# Let's look at the distribution of our DV
+labels <- c("Clinton", "O'Malley", "Sanders")
+ggplot(anes, aes(x = demcand)) + geom_bar(fill = "orange") + 
+  scale_x_discrete(limits = c("1", "2", "3"),
+                   labels = labels) +
+  labs(title = "Democratic Candidate Choice",
+       x = "Support",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+
+## **Nominal Dependent Variables: The Multinomial Logit** ##
+
+### *What are nominal dependent variables?* ###
+
+  + Unlike ordered models, nominal variables allow us to identify categories but they can't be oredered in any mathematically meaningful way. It is essencially an unordered model.
+  + It is better to keep these model simple because it can easily overwhlem us and our computers! In a more practical way, it becomes harder to interpret results
+  
+### *How the model is constructed* ###
+
+The stochastic component of these models come from a multinomial distribution. Think about it as an extension of the binomial distribution into more than two choices. In fact, the binomial distribution is a categorical distribution with only two options. The systematic component using a logit link function for a linear model. 
+
+$$
+\begin{split}
+Y &\sim \frac{n!}{\prod_{j\in J}n_j!} \prod_{j \in J} \pi_j^{n_j}\\
+\\
+\pi_j = Pr(y_i=j|X_i) &= \frac{exp(X_i\beta_j)}{\sum^J_{m=1} exp(X_i\beta_m)}
+\end{split}
+$$
+
+$\pi_j$ gives us a probability but doesn't allow us to actually **identify** the model. What this means is that there are multiple combinations of parameters that could lead to the same results. In the slides this is shown when we muliply the probability by $\frac{exp(X_i\tau)}{exp(X_i\tau)}$. The probability doesn't change, but the result can be obtained differently. The most common way of identifying the model is to set a baseline category and then constrain one of the $\beta_j$ to zero. The standard is just setting the first choice as the baseline, but you should do what is more intuitive for your results. Hence, adding this constrain will alow us to identify the model. It also defines the probaiblities as:
+$$
+\begin{split}
+Pr(y_i=1) &= \frac{1}{1+\sum^J_{j=2}exp(X_i\beta_m)}\\
+\\
+Pr(y_i=m) &= \frac{exp(X_i\beta_m)}{1+\sum^J_{j=2}exp(X_i\beta_m)} \quad for \quad m>1
+\end{split}
+$$
+
+We follow the same strategy as in ordered models to calculate the likelihood function of ordered models. We first need to create a matrix of choices, calculate the probabilities and then take out the logarithm. The results of this is:
+
+$$
+ll(\beta_2 ... \beta_j) = \sum_{i=1}^N\sum_{j=1}^J y_{ij}\ln \left(\frac{exp(X_i\beta_m)}{1+\sum^J_{j=2}exp(X_i\beta_m)}\right)
+$$
+
+### Calculating the model in R ###
+
+In this case we are going to use canned functions to make things a bit easier. In particular we will be using the *vglm* function from the **VGAM** package. The *multinom* function from the **nnet** package can be also another way to compute the multinomial logit. We could also use the **mlogit** function from the *mlogit* package. We are going to be using this one for the condiitonal logit.    
+
+```{r model}  
+# Using vglm
+mnl <- vglm(demcand ~  female + age + educ + ftobama + liberal,         # Function
+             data = anes,                                               # Data
+             multinomial(refLevel = 1))                                 # Define the base category
+summary(mnl)
+
+# The results from the model are in the log-odds space. Hence, if we want to calculate the odds we need to exponentiate the coefficients.
+# We would also need to define a set of values for the RHS variables to calculate the odds, as we have done it before
+X <- model.matrix(mnl)
+head(X)
+odds <- exp(X %*% coef(mnl))
+head(odds)
+mean(odds[seq(from = 1, to = nrow(X), by = 2)])                         # Odds for O'Malley vs Clinton
+mean(odds[seq(from = 2, to = nrow(X), by = 2)])                         # Odds for Sanders vs Clinton
+
+# If we want to see for instance the odds for females we would need to fix two parameters at the same time
+X <- model.matrix(mnl)
+X[seq(1,nrow(X),2), "female:1"] <- X[seq(2,nrow(X),2), "female:2"] <- 1
+odds <- exp(X %*% coef(mnl))
+mean(odds[seq(from = 1, to = nrow(X), by = 2)])               # Odds for O'Malley vs Clinton
+mean(odds[seq(from = 2, to = nrow(X), by = 2)])               # Odds for Sanders vs Clinton
+
+# What would happen if we have more than three options? Do we need to change our code?
+
+# We can also use the predict function to predict the odds
+X <- mnl@x                                                    # Other way of calling the model matrix
+colMeans(exp(predict(mnl, newdata = as.data.frame(X))))       
+# Let's decompose this a bit
+# The predict function gives us a matrix of log-odds between the alternatives
+head(predict(mnl, newdata = as.data.frame(X)))
+# We need to exponentiate the coefficients to make them odds
+head(exp(predict(mnl, newdata = as.data.frame(X))))
+# Then we average across columns (we could use apply as well, try doing it this way)
+colMeans(exp(predict(mnl, newdata = as.data.frame(X))))
+
+# The reference category matters for interpretation!
+mnl_2 <- vglm(demcand ~  female + age + educ + ftobama + liberal,         
+             data = anes,                                     
+             multinomial(refLevel = 2))                       
+mnl_3 <- vglm(demcand ~  female + age + educ + ftobama + liberal,       
+             data = anes,                                     
+             multinomial(refLevel = 3)) 
+
+summary(mnl_2)
+summary(mnl_3)
+
+```
+
+### Some Quantitites of Interest ###
+
+```{r qoi}
+# Predicted Probabilities of each Category =  exp(XiBj) / sum exp(XiBm) 
+X_f <- X_m <- model.matrix(mnl)
+head(X_f)
+
+# We have to make sure to call the right coefficients
+X_f[seq(1,nrow(X_f),2), "female:1"] <- X_f[seq(2,nrow(X_f),2), "female:2"] <- 1
+X_m[seq(1,nrow(X_m),2), "female:1"] <- X_m[seq(2,nrow(X_m),2), "female:2"] <- 0
+
+# Calculate the linear component
+f_exp <- exp(X_f %*% coef(mnl))
+head(f_exp)
+m_exp <- exp(X_m %*% coef(mnl))
+
+# Create the denominator for males and females. Since exp(XiBm) for all m categories is the same
+denom_fem <- 1 + f_exp[seq(1,nrow(f_exp),2)] + f_exp[seq(2,nrow(f_exp),2)]
+head(f_exp[seq(2,nrow(f_exp),2)])
+denom_mal <- 1 + m_exp[seq(1,nrow(m_exp),2)] + m_exp[seq(2,nrow(m_exp),2)]
+
+# Calculate the Predicted Probabilities
+pp <- matrix(NA, 3, 2)
+pp[1,1] <- mean(1 / denom_fem)                               # Clinton   
+pp[2,1] <- mean(f_exp[seq(1,nrow(f_exp),2)] / denom_fem)     # O'Malley
+pp[3,1] <- mean(f_exp[seq(2,nrow(f_exp),2)] / denom_fem)     # Sanders
+
+pp[1,2] <- mean(1 / denom_mal) 
+pp[2,2] <- mean(m_exp[seq(1,nrow(m_exp),2)] / denom_mal) 
+pp[3,2] <- mean(m_exp[seq(2,nrow(m_exp),2)] / denom_mal) 
+
+colnames(pp) <- c("female", "male")
+rownames(pp) <- c("Clinton", "O'Malley", "Sanders")
+pp
+
+# can also use predict function
+X <- mnl@x
+X[ ,"female"] <- 0
+colMeans(predict(mnl, newdata = as.data.frame(X), type = "response"))
+
+## First Differences in Pred Probs
+mean(1 / denom_fem) - mean(1 / denom_mal)                    # Clinton 
+
+mean(f_exp[seq(1,nrow(f_exp),2)] / denom_fem) -
+  mean(m_exp[seq(1,nrow(m_exp),2)] / denom_mal)              # O'Malley
+
+mean(f_exp[seq(2,nrow(f_exp),2)] / denom_fem) - 
+  mean(m_exp[seq(2,nrow(m_exp),2)] / denom_mal)              # Sanders
+
+# LEt's use predict to graph the probabilities across how liberal people are
+points <- matrix(NA, 5, 3)
+libe <- seq(1:5)
+X <- mnl@x
+for(i in 1:length(libe)){
+  X[ ,"liberal"] <- i
+  points[i, ] <- colMeans(predict(mnl, newdata = as.data.frame(X), type = "response"))
+}
+
+points<-cbind(points, libe)
+plot(points[, 4], points[,1], type = 'l', ylab = "Predicted Probability",
+xlab = "Liberal Scale", main="Predicted Probability",
+xlim=c(1,5), ylim=c(0,1))
+lines(points[,4], points[,2], type = 'l', col="orange")
+lines(points[,4], points[,3], type = 'l', col="blue")
+legend("topright", legend=c("Clinton", "O'Malley", "Sanders"),
+col=c("black","orange", "blue"), lty=1, cex=0.6)
+```
+
+### Testing the IIA assumtion ###
+
+The MNL's models are assumed to be independnet of irrelevant alternatives. This means that the removal or addition of another alternative does not alter the relative probabilities of any-decision maker. But, how often is this true? 
+
+1. **Formal approach** Here we use the Hausman-McFadded test for a restricted (r) and an unrestricted (u) model. The former would be the model with constrained choices.  
+
+$H_0:$ IIA exists ($\hat\beta_r=\hat\beta_u$)
+
+$H_a:$ IIA does not exist
+
+With test-statistic
+$$
+H = (\hat\beta_r-\hat\beta_u)^T[\hat V_r - \hat V_u]^{-1}(\hat\beta_r-\hat\beta_u) \sim \chi^2_{k}
+$$
+
+```{r formal_iia}
+# The package that has the canned Hausman-McFadden test is the mlogit command. I highly recommen using this comman instead of vglm
+anes_w <- mlogit.data(anes,                                              # original data 
+                           choice = "demcand",                           # Defining the nominal variable
+                           shape = "wide")                               # The type of shape you want for the data
+head(anes_w)
+
+# Let's estimate the full model
+mnl1 <- mlogit(demcand ~ 1 | age + educ + female + ftobama,              # DV ~ Choice_charact | indiv_charact 
+               data = anes_w,                                            # Tranformed Data
+               reflevel = 1)                                             # reference level
+
+
+mnl_r <- mlogit(demcand ~ 0 | age + educ + female + ftobama,
+              data = anes_w, reflevel = 1, alt.subset = c(1,2))          # Omit Sanders as a choice
+
+# Hausman-McFadden Test one way
+hmftest(mnl1, mnl_r)
+# Hausman-McFadden test without the need to calculate a second model
+hmftest(mnl1, c("1","2"))
+```
+
+By yourself try calculating the Hausman-McFadden test manually using matrix algebra.
+
+2. **Informal approach** We can always estimate model of pairwise options and see if the coefficients change a lot. This "a lot" is very subjective, but it couldbe a good eyeball measure. 
+
+```{r inf_iia}
+sub1 <- mlogit(demcand ~ 1 | age + educ + female + ftobama , data = anes_w,
+               alt.subset=c("1", "2"))
+summary(sub1)
+sub2 <- mlogit(demcand ~ 1 | age + educ + female + ftobama , data = anes_w,
+               alt.subset=c("1", "3"))
+summary(sub2)
+sub3 <- mlogit(demcand ~ 1 | age + educ + female + ftobama , data = anes_w,
+               alt.subset=c("2", "3"))
+summary(sub3)
+```
+
+### **Nominal Dependent Variables: The Conditional Logit** ###
+
+The main difference between the MNL and the conditional logit model is that in the CLM, we use characteristics of the outcomes are used to predict the choice that is being made. In this case, let's use the *TravelMode* dataset from the AER package that already comes in a long format by choice.
+Some specifics of the dataset:
+
+  + **individual:** Factor indicating individual with levels 1 to 200.
+  + **mode:** Factor indicating travel mode with levels "car", "air", "train", or "bus".
+  + **choice:** Factor indicating choice with levels "no" and "yes".
+  + **wait:** Terminal waiting time, 0 for car.
+  + **vcost:** Vehicle cost component.
+  + **travel:** Travel time in the vehicle.
+  + **gcost:** Generalized cost measure.
+  + **income:** Household income.
+  + **size:* Party size.
+
+Now, let's generate some predicted probabilities of the choices
+```{r CL}
+# Call the data
+data("TravelMode", package = "AER") 
+data <- TravelMode
+head(data)
+
+# Estimate the mode
+mnl2 <- mlogit(choice ~ wait + vcost | income + size , data = data)
+summary(mnl2)
+
+# Simmulate the data from a multivariate normal distribution
+gamma <- mnl2$coefficients                    # estimated betas
+V <- solve(-mnl2$hessian)                     # inverted neg. Hessian
+
+nsim <- 1000
+set.seed(1234) 
+S <- mvrnorm(nsim, mu = gamma, Sigma = V)
+
+head(S)
+
+# Define the scenario of interest: typical case approach
+train  <- c(1,0,0, mean(data[data$mode=="train","wait"]), mean(data[data$mode=="train","vcost"]), mean(data[,"income"]), 0, 0,
+            mean(data[,"size"]),0,0)
+bus <- c(0,1,0, mean(data[data$mode=="bus","wait"]), mean(data[data$mode=="bus","vcost"]), 0, mean(data[,"income"]), 0,
+            0,mean(data[,"size"]),0)
+car <- c(0,0,1, mean(data[data$mode=="car","wait"]), mean(data[data$mode=="car","vcost"]), 0, 0, mean(data[,"income"]),
+            0,0,mean(data[,"size"]))
+air <- c(0,0,0, mean(data[data$mode=="car","wait"]), mean(data[data$mode=="air","vcost"]), 0, 0, 0,0,0,0)
+
+# calculating linear predictors
+theta_t <- S %*% train 
+theta_b <- S %*% bus 
+theta_c <- S %*% car
+theta_a <- S %*% air
+
+# Calculate the denominator
+denom = exp(theta_t) + exp(theta_b) + exp(theta_c) + exp(theta_a)
+
+# Calculate the expected values
+ev_train <- exp(theta_t)/denom
+ev_bus <- exp(theta_b)/denom
+ev_car <- exp(theta_c)/denom
+ev_air <- exp(theta_a)/denom
+
+# Set a placeholder matrix
+ev <- matrix(NA, 4,3)
+ev[1,1] <- mean(ev_train)
+ev[2,1] <- mean(ev_bus)
+ev[3,1] <- mean(ev_car)
+ev[4,1] <- mean(ev_air)
+ev[1,2:3] <- quantile(ev_train, c(.025,.975))
+ev[2,2:3] <- quantile(ev_bus, c(.025,.975))
+ev[3,2:3] <- quantile(ev_car, c(.025,.975))
+ev[4,2:3] <- quantile(ev_air, c(.025,.975))
+rownames(ev) <- c("Train", "Bus", "Car", "Air")
+colnames(ev) <- c("Mean", "Low CI", "High CI")
+round(ev, 3)
+```
+
+
+## **Additional Resources** ##
+
+   + I recommend Scott J. Long's book on Categorical and Limited values for further information in theses types of models. This online [chapter](https://data.princeton.edu/wws509/notes/c6.pdf) is also pretty clear. 
+   + I found this [video](https://www.youtube.com/watch?v=-Cp_KP9mq94&ab_channel=econometricsacademy) and this [webpage](https://data.princeton.edu/wws509/r/c6s2) helpful.
+   + Estimation of multinomial logits using [mlogit](http://www2.uaem.mx/r-mirror/web/packages/mlogit/vignettes/mlogit.pdf)
