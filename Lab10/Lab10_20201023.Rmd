@@ -1,0 +1,211 @@
+---
+title: 'Lab 10: intro to Missing Data'
+author: "Mateo Villamizar Chaparro"
+date: "10/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab9")
+library(MASS)
+library(Amelia)              
+library(tidyverse)
+library(visdat)
+library(naniar)
+```
+
+## **Important Information**:
+1. No **Office hours** next week. If you need to talk to me, just send me an email. 
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+3. Short paper 2 was pushed one week and it is due now Nov. 13. 
+
+## **A few comments on missing data** ##
+
+Missing data IS one of the biggest issues when conducting empirical analysis. Mostly because we really do not know if the missingness is because of our recollection methods or it is actual missing information. I came across this [blog](https://broadstreet.blog/2020/10/21/archival-silences-and-historical-political-economy/) about silences in archival research in political economy written by [Prof. Emily Sellars](https://emilysellars.com/) that touches in some of the issues of missing archival data. The author mentions some issues related to measurement error, endogenous sample selection and bias in substantive focus (but this one is more historical) that results from incomplete archives. This IS also an issue of missing data.
+
+With the advances in computing power, more and more solutions to this issue have arised. But, also, with the explosion in methods and algorithms for missing data, is is key to understand how it works and how it can change results. If after today and next week's lab whenever you see *mean imputation* or *listwise deletion* in a paper you start questioning all the empirical results, I will be happy. Specially the former. 
+
+### **Some important distinctions between missing data** ###
+There is a taxonomy of types of missing data that classifies data depending on the underlying assumptions regarding the missingness of the data. Let's start assuming we have a data matrix X. This matrix can be divided in $X_{obs}$ and $X_{miss}$. 
+
+$$
+X = \begin{bmatrix} 1 & NA & 3\\ 4 & 5 & 6 \\ NA & 8 & 9\\ 10 & NA & NA \end{bmatrix}
+$$
+The X matrix is associated with a missingness matrix R, that indicates which observations are missing. Think about R as a seriess of indicador variables that identify non-missingness in the data
+
+$$
+R = \begin{bmatrix} 1 & 0 & 1\\ 1 & 1 & 1 \\ 0 & 1 & 1\\ 1 & 0 & 0 \end{bmatrix}
+$$
+Then, let's try to estipulate a probability model to predict the values in R given that we observe X. This model has a parameter $\phi$. If we define a Bernoulli model, then $\phi$ will be the probability of being missing. 
+
+Name                         | Acroym | Can Predit R with        | Probability                                |
+---------------------------- | ------ | ------------------------ | ------------------------------------------ |
+Missing Completely at random | MCAR   | -                        | $Pr(R|X\phi)=Pr(R|\phi)$                   |
+Missing at random            | MAR    | $X_{obs}$                | $Pr(R|X\phi)=Pr(R|X_{obs},\phi)$           |
+Non-ignorable                | NI     | $X_{obs}$ and $X_{miss}$ | $Pr(R|X\phi)=Pr(R|X_{obs}, X_{miss},\phi)$ |
+
+Let's try to understand this in an example, taken from [Prof. Akande's](https://akandelanre.github.io/) slides. Assume you run a paper survey with 30 questions. From this, 20 are in one side of the page and the rest in the other side. We collected individual level characteristics on the first 20 questions like gender and age. We observe that some participants didn't respond questions 21-30.
+
+  + If some people didn't knew that there were more questions on the other side of the page, we would have a _______
+  + If younger people did not respond the questions on the other side we would have a ________
+  + If people with higher incomes do not respond the questions on the other side of the page, we would have a ________
+  
+## **Some missingness in R** ##
+
+We would not be using any fancy datasets today, we are building our own. 
+```{r data}
+# Let's set the number of observations and a seed
+set.seed(1234)
+n <- 10000
+# Let's create our independent variables
+x1 <- rnorm(n)
+x2 <- rpois(n, 4)
+x3 <- rbinom(n, 1, 0.5)
+# Let's create our dependent variable
+y <- 3*x1 + 2*x2 - 1*x3 + rnorm(n, 10, 3)
+
+# Let's introduce some missingness and determine the final dataset
+bug <- rbinom(n, 1, 0.6)
+df <- as.data.frame(cbind(y, x1, x2, x3, bug))
+df$x1[df$bug==1] <- NA
+#df$x2[df$x2>=5] <- NA
+df$x2[sample(1:nrow(df), round(n/4))] <- NA            # another way to do this more directly with a bit less control
+df$x3[sample(1:nrow(df), round(n/3))] <- NA            # another way to do this more directly with a bit less control
+df$y[sample(1:nrow(df), round(n/7))] <- NA             # another way to do this more directly with a bit less control
+df <- df[, 1:4]
+```
+
+Let's look at how bad our missingness is using some canned functions. There are A LOT of these available in CRAN and cyberspace. Choose one that you trust. Here we will use *Amelia*, *visdat* and *naniar*. 
+
+```{r visual}
+# Let's create a dataset where we omit all the NAs and see how much our sample shrinks
+df_listw <- na.omit(df)
+dim(df_listw)[1]/dim(df)[1]
+
+# Using Amelia
+Amelia::missmap(df)        # Shows missingness 
+
+# Using visdat
+visdat::vis_dat(df)        # Shows our dataset and the types of variables
+visdat::vis_miss(df)       # Shows missingness  
+visdat::vis_cor(df)        # visdat also plot correlation matrices
+
+# We can also look at mising variables
+naniar::gg_miss_var(df)
+
+```
+
+### Imputation ###
+Let's play with some ways to impute data and see their results under OLS.
+```{r mi}
+# Recall the "true" values of our data
+m1 <- lm(y ~ x1 + x2 + x3)
+
+# listwise deletions
+m2 <- lm(y ~ x1 + x2 + x3, data = df_listw)
+
+# mean imputation
+df_mean <- df
+df_mean$x1[is.na(df_mean$x1)] <- mean(x1, na.rm = TRUE)
+df_mean$x2[is.na(df_mean$x2)] <- mean(x2, na.rm = TRUE)
+df_mean$x3[is.na(df_mean$x3)] <- mean(x3, na.rm = TRUE)
+df_mean$y[is.na(df_mean$y)] <- mean(y, na.rm = TRUE)
+
+m3 <- lm(y ~ x1 + x2 + x3, data = df_mean)
+
+# LEt's see all the models
+stargazer::stargazer(m1, m2, m3, type = "text")
+```
+Let's try to do the multiple imputation algorithm by hand
+
+```{r mi2}
+# recall the random imputation function from class
+r_imp <- function(x){
+  mis <- is.na(x)
+  obs <- x[!mis]
+  x[mis] <- sample(x=obs, size=sum(mis), replace=T)
+  return(x)
+}
+
+# Let's create a series of imputed matrices
+m <- 5                                                   # number of imputations
+r_co <- matrix(NA, 4, m)                                 # results' place holder for coefficients
+r_se <- matrix(NA, 4, m)                                 # results' place holder for standard errors
+dfs<- list()                                             # list holding the different datasets
+
+for (i in 1:m) {
+  dfs[[i]] <- as.data.frame(apply(df, 2, r_imp))
+  mm <- lm(y ~ x1 + x2 + x3, data = dfs[[i]])
+  r_co[,i] <- coef(mm)
+  r_se[,i] <- sqrt(diag(vcov(mm)))
+}
+
+rownames(r_co) <- c("Intercept", "x1", "x2", "x3")
+colnames(r_co) <- c("Imp1", "Imp2", "Imp3", "Imp4", "Imp5")
+r_co
+```
+
+Remember that the multiple estimate coefficient is equal to
+$$
+\hat\theta=M^{-1}\sum^M_{m=1}\hat\theta_m
+$$
+and that the final variance estimate is
+$$
+V_{\theta}=W+(1+M^{-1})B
+$$
+where the within (W) and between (B) variance are calculated as:
+$$
+W = M^{-1}\sum^M_{m=1}s^2_m ; \; B = \frac{1}{M-1}\sum^M_{m=1}(\hat\theta_m-\hat\theta)^2
+$$
+```{r }
+# Mean coefficients
+theta_hat <- apply(r_co, 1, mean)
+
+# Variance
+W <- apply(r_se^2, 1, mean)                             # Within variance
+B <- (1/(m-1))*apply((r_co-theta_hat)^2, 1, sum)        # between variance
+v_theta = W + (1+m^{-1})*B
+
+# results from the imputations
+res_mi <- matrix(NA, 4,4)
+res_mi[,1] <- theta_hat
+res_mi[,2] <- sqrt(v_theta)
+res_mi[,3] <- theta_hat-sd(v_theta)
+res_mi[,4] <- theta_hat+sd(v_theta)
+colnames(res_mi) <- c("Coefficient","SE", "Lo_CI", "Hi_ci")
+rownames(res_mi) <- c("Intercept", "x1", "x2", "x3")
+res_mi
+```
+
+Some other quantities of interest
+```{r qoi}
+# recall
+m <- 5
+# degrees of freedom for the multiple imputation
+deg_free <- (m-1)*(1+((1/(m+1))*(W/B)))^2
+deg_free
+
+# relative increase in variance
+r = (m*B)/((m+1)*W)
+r
+
+# fraction of info missing for estimated coeff
+lambda <- ((r+2)/(deg_free+3))/(r+1)
+lambda
+
+# relative efficiency
+rel_eff <- (1+(lambda/m))^(-1)
+rel_eff
+
+
+```
+
+## **Additional Resources** ##
+  + https://faculty.nps.edu/sebuttre/home/R/missings.html
+  + https://uc-r.github.io/missing_values
+  + There is a los of new an exciting work in missing data. In fact, Prof. Hylligus has a working paper on this with ou very own Gabriel MAdson. Additionally, just across the PoliScie department Prof. Akande has a cool paper on missing data for categorical variables. [Check it out](https://amstat.tandfonline.com/eprint/64x4hfgkSgQPXwGrBSRV/full)
+  + Gary King has released some of his lectures in Youtube. I found his video on [missing data](https://www.youtube.com/watch?v=qlPs8Ioa56Y&ab_channel=GaryKing) interesting. Also, check his [webpage](https://gking.harvard.edu/amelia) on how to use Amelia.
+  + In case you were wondering about choosing olors for your graphs [this webpage](https://www.colorhexa.com/297927) might be a good place to search for them.
+  + naniar [page](http://naniar.njtierney.com/articles/getting-started-w-naniar.html)
+  + visdat [page](https://cran.r-project.org/web/packages/visdat/vignettes/using_visdat.html)
