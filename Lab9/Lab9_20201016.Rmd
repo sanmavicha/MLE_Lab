@@ -1,0 +1,409 @@
+---
+title: 'Lab 9: CNL and Count Models'
+author: "Mateo Villamizar Chaparro"
+date: "10/15/2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab9")
+library(AER)
+library(MASS)
+library(mlogit)              
+library(tidyverse)
+```
+
+## **Important Information**:
+1. **Office hours**: Tuesdays from 4:00-5:00 pm (https://duke.zoom.us/j/94327288065)
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+
+## **Some things about HW2 and the first short paper** ##
+1. Take the exercise of the short paper seriously. Look at papers in your field/subfield that use these methods and see how they are presented. Take a closer look at how they present tables and graphs and their discussions about the strengths and weaknesses from their models
+2. For the short paper, any substantive comments on your theory, would not reduce your grade. They are just comments on what you are writing that I found interesting to flag, since these are topics some of you want to keep working on. 
+
+
+## **CNL using mlogit** ## 
+
+Let's continue the analysis of transportation choices from last lab. Here we are running a conditional logit where we include the cost and wait time for each choice in addition to travelling party characteristics. 
+
+```{r pressure}
+# Call the data
+data("TravelMode", package = "AER") 
+data <- TravelMode
+
+# Estimate the model
+mnl2 <- mlogit(choice ~ wait + vcost | income + size , data = data)
+summary(mnl2)
+# In case your data is not in the apropriate format you can use the mlogit.data command. Two tips when using this command. First, the command asks for the information of your actual dataset and it will convert it into a mlogit friendly format. So the options of the function are the characteristics of you original data. Second, make sure that the choice varying variables have a "prefix" that is clearly separable. In this case use ".", ",", "-", "_". This way it is easier for the command to work. Always use ?mlogit.data for addiitonal help. 
+
+# Simmulate the data from a multivariate normal distribution
+gamma <- mnl2$coefficients                    
+V <- solve(-mnl2$hessian)                     
+
+# Simulation 
+nsim <- 1000
+set.seed(1234) 
+S <- mvrnorm(nsim, mu = gamma, Sigma = V)
+head(S)
+```
+```{r simulation}
+
+# Define the scenario of interest: typical case approach
+train  <- c(1,0,0, mean(data[data$mode=="train","wait"]), mean(data[data$mode=="train","vcost"]), mean(data[,"income"]), 0, 0,
+            mean(data[,"size"]),0,0)
+bus <- c(0,1,0, mean(data[data$mode=="bus","wait"]), mean(data[data$mode=="bus","vcost"]), 0, mean(data[,"income"]), 0,
+            0,mean(data[,"size"]),0)
+car <- c(0,0,1, mean(data[data$mode=="car","wait"]), mean(data[data$mode=="car","vcost"]), 0, 0, mean(data[,"income"]),
+            0,0,mean(data[,"size"]))
+air <- c(0,0,0, mean(data[data$mode=="air","wait"]), mean(data[data$mode=="air","vcost"]), 0, 0, 0,0,0,0)
+
+# calculating linear predictors
+theta_t <- S %*% train 
+theta_b <- S %*% bus 
+theta_c <- S %*% car
+theta_a <- S %*% air
+
+# Calculate the denominator
+denom = exp(theta_t) + exp(theta_b) + exp(theta_c) + exp(theta_a)
+
+# Calculate the expected values
+ev_train <- exp(theta_t)/denom
+ev_bus <- exp(theta_b)/denom
+ev_car <- exp(theta_c)/denom
+ev_air <- exp(theta_a)/denom
+
+# Set a placeholder matrix
+ev <- matrix(NA, 4,3)
+ev[1,1] <- mean(ev_train)
+ev[2,1] <- mean(ev_bus)
+ev[3,1] <- mean(ev_car)
+ev[4,1] <- mean(ev_air)
+ev[1,2:3] <- quantile(ev_train, c(.025,.975))
+ev[2,2:3] <- quantile(ev_bus, c(.025,.975))
+ev[3,2:3] <- quantile(ev_car, c(.025,.975))
+ev[4,2:3] <- quantile(ev_air, c(.025,.975))
+rownames(ev) <- c("Train", "Bus", "Car", "Air")
+colnames(ev) <- c("Mean", "Low CI", "High CI")
+round(ev, 2)
+```
+
+Let's see now how the probabilities change if the waiting time of airplaines increases leaving the cost of all the other vehicles at its mean. Here, let's use the canned function predict, but you can do this manually using the code from above. Again, here I'm just giving you different ways of calculating the quantities of interest so you can choose the one that make smore sense to you. 
+
+```{r use_predict}
+# Using predict
+t_wait <- seq(0,100, 10)
+ev1 <- matrix(NA, length(t_wait),12)
+for (i in 1:length(t_wait)) {
+  XN <- data
+  XN[XN$mode=="air","wait"] <- t_wait[i]
+  XN[XN$mode=="train","wait"] <- mean(data[data$mode=="train","wait"])
+  XN[XN$mode=="bus","wait"] <- mean(data[data$mode=="bus","wait"])
+  XN[XN$mode=="car","wait"] <- mean(data[data$mode=="car","wait"])
+  ev1[i,1:4] <- apply(predict(mnl2, newdata = XN, type = "probs"), 2, mean)
+  ev1[i,5:8] <- apply(predict(mnl2, newdata = XN, type = "probs"), 2, quantile, probs=c(0.05))
+  ev1[i,9:12] <- apply(predict(mnl2, newdata = XN, type = "probs"), 2, quantile, probs=c(0.975))
+}
+colnames(ev1) <- c("Air", "Train", "Bus", "Car", "lo_ai", "lo_tr", "lo_bu", "lo_ca","hi_ai", "hi_tr", "hi_bu", "hi_car")
+round(ev1, 3)
+```
+```{r plot}
+# plotting the results
+plot(t_wait, ev1[, 1], type = 'l', lwd = 2, col = "#ff8c00",
+     ylab = "Predicted Probability",
+     xlab = "Waiting Time for air (all other ratings were fixed at their means)", 
+     xlim=c(1,100), ylim=c(0,1))
+lines(t_wait, ev1[,2], type = 'l', col="#007df6")
+lines(t_wait, ev1[,3], type = 'l', col="#CC0066")
+lines(t_wait, ev1[,4], type = 'l', col="#940094")
+legend("topright", legend=c("Air", "Train", "Bus", "Car"),
+       col=c("#ff8c00","#007df6", "#CC0066", "#940094"), lty=1, cex=0.6)
+
+# plotting with confidence intervals
+plot(t_wait, ev1[, 1], type = 'l', lwd = 2, col = "#ff8c00",
+     ylab = "Predicted Probability",
+     xlab = "Waiting Time for air (all other ratings were fixed at their means)", 
+     xlim=c(1,100), ylim=c(0,1))
+lines(t_wait, ev1[,2], type = 'l', col="#007df6")
+lines(t_wait, ev1[,3], type = 'l', col="#CC0066")
+lines(t_wait, ev1[,4], type = 'l', col="#940094")
+legend("topright", legend=c("Air", "Train", "Bus", "Car"),
+       col=c("#ff8c00","#007df6", "#CC0066", "#940094"), lty=1, cex=0.6)
+x <- c(t_wait, rev(t_wait))
+ytr <- c(ev1[,5], rev(ev1[,9]))
+polygon(x, ytr, col = "#ff8c000f", border = FALSE)
+ybu <- c(ev1[,6], rev(ev1[,10]))
+polygon(x, ybu, col = "#007df60f", border = FALSE)
+yca <- c(ev1[,7], rev(ev1[,11]))
+polygon(x, yca, col = "#CC00660f", border = FALSE)
+yai <- c(ev1[,8], rev(ev1[,12]))
+polygon(x, yai, col = "#9400940f", border = FALSE)
+```
+
+## **Count Models** ##
+
+### *What are count variables?* ###
+
+Count variables are pretty common in Political Science and they recall the number of events that happened during a specific period of time. There are two main characteristics of this type of data. First, it is **discrete** which means we only have integers. Second, it is **bounded from below** which means that you can't have negative numbers. These two characteristics are important as they will help us determine the best distribution that approximates this data. Although there are some distributions that can model this type of data, the most common one is a **Poisson distribution**.
+
+*Why not use OLS? * Well, by know you should know the two main objections: predictions out of bounds (decimals and negative numbers in this case) and the fact that the model will suffere from heteroskedasticity since the variance will depend on the mean. Some scholar try to avoid this issues by using log-transformations of the DV. However, here scholars need to make an assumption of how to deal with zeros in the data. But even this transformation will have its set backs. Think aout what some of them could be.
+
+### *How do we construct the model* ###
+
+We have derived the log-likelihood function for a Poisson distribution before. See [lab 4](https://github.com/sanmavicha/MLE_Lab/tree/master/Lab4). So, I'm not going into details here. The model we will be calculating is:
+
+$$
+\begin{split}
+Y \sim Poisson(\mu_i) &= \frac{e^{-\mu_i}\mu_i^{y_i}}{y_i!} \\
+\\
+\mu_i &= e^{X_i\beta}
+\end{split}
+$$
+The log-likelihood function is:
+
+$$
+ll(\mu|y) = \sum_{i=1}^n  y_i \ln \mu-\sum_{i=1}^n\ln(y_i!) -\mu n  \\
+$$
+
+Some assumptions from the Poisson model:
+  + Infinitesimal interval
+  + No simultaneity of events
+  + IID
+  
+### *Our dataset* ###
+
+Given that some of you are very interested in international security issues we are not going to use the published articles dataset from the AER.  Instead, for today's lab we are going to use a dataset from [Wilson and Piazza (2013)](https://onlinelibrary.wiley.com/doi/pdf/10.1111/ajps.12028?casa_token=v5vMx_STXzwAAAAA:-Zb1lwc6e7yAhjTxFdxSujDkx2fSBhCk8qBmXbPl_msrNnocNjWMKRDsiJK9oRGNudgKYbh5f4Id). A copy of the data used in this paper can be found in a txt format in excel. The refime data is taken from Barbara Geddes' work and the base category are military authoritarian regimes. The main variables are:
+
+  + **FGTDDom:** country-year raw count of domestic terrorist incidents
+  + **year:** year in the sample
+  + **ccode:** country code
+  + **democracy:**: Indicator variable for democracies
+  + **personalist:** Indicator variable for personalist regimes
+  + **oneparty:** Indicator variable for oneparty regimes.
+  + **monarcy:** Indicator variable for monarchies
+  + **hybrid:** Indicator variable for hybrid regimes
+  + **logpop:** Country's population (log)
+  + **logarea:** Country's area (log)
+  + **logGNI:** Gross National Income (log)
+  + **GINI:** inequality measured by the Gini coefficient on a 0-100 scale
+  + **Coldwar:** Indicator variable for the period period 1970-1991.
+  + **Durable:** durability score from Polity IV
+  + **AggSF:** Indicator for state failure
+  + **dome_confl:** Domestic conflict variable from UCDP
+  + **inal_confl:** International conflict variable from UCDP
+
+```{r data}
+#terrorism <- read.table("wilsonpiazzavars_r.txt", head=T)      # Notice we use read.table for txt files
+#colnames(terrorism)[13:17] <- c("democracy","personalist","oneparty","monarchy","hybrid")
+#colnames(terrorism)[11:12] <- c("dome_confl", "inal_confl")
+#terrorism <- terrorism[-3]
+#write.table(terrorism, "wilsonpiazzavars.txt", col.names = T)
+terrorism <- read.table("wilsonpiazzavars.txt", head=T)      # Notice we use read.table for txt files
+summary(terrorism)
+```
+
+### *The Poisson Model in R* ###
+As we have done before, let's use first the numerical optimization procedure and then the canned functions
+```{r pois}
+# Set the covariate matrix and the dependent varible vector
+y <- terrorism$FGTDDom
+X <- cbind(1, terrorism[3:16])
+
+# Create the function, here we go easier and we use the dpois function
+llhfunc <- function(y, x, betas){
+  mu <- exp(betas %*% t(X))
+  ll  = sum(dpois(y,mu, log=T))
+  return(ll)
+}
+
+# set starting values and the optimization process
+SV <- rep(1, ncol(X))
+m1 <- optim(par=SV, fn=llhfunc, y=y, x=X, control=list(fnscale=-1), method="BFGS")
+m1$par
+
+# Canned functions
+m2 <- glm(FGTDDom ~ Durable + GINI + logGNI + logpop + logarea + AggSF + ColdWar + dome_confl + inal_confl +
+            democracy + personalist + oneparty + monarchy + hybrid, 
+          data=terrorism, 
+          family=poisson(link="log"))
+summary(m2)
+```
+
+### *Quantities of interest* ###
+1. Expected counts
+
+```{r exp_counts}
+### Average expected counts ###
+
+# For Personalist Regimes #
+X <- model.matrix(m2)
+X[,"democracy"] <- 1
+X[,"personalist"] <- 0
+X[,"oneparty"] <- 0
+X[,"monarchy"] <- 0
+X[,"hybrid"] <- 0
+
+mean(exp(X %*% coef(m2)))
+mean(predict(m2, newdata=data.frame(X), type="response"))
+
+# For countries in the 75th percentile of the GINI #
+
+Xg1 <- Xg2 <- model.matrix(m2)
+Xg1[,"GINI"] <- quantile(Xg1[,"GINI"], .25)
+Xg2[,"GINI"] <- quantile(Xg2[,"GINI"], .75)
+
+mean(exp(Xg1 %*% coef(m2)))
+mean(exp(Xg2 %*% coef(m2)))
+
+```
+
+2. Predicted Probabilities
+```{r pred_prob}
+# Average predicted probability of 2 terrorist attacks for democracies #
+mean(dpois(x = 2, lambda = exp(X %*% coef(m2))))
+
+# Average change in predicted probability 2 terrorist attacks from 25th Gini to 75th Gini #
+mean(dpois(x = 2, lambda = exp(Xg2 %*% coef(m2))) - dpois(x = 2, lambda = exp(Xg1 %*% coef(m2))))
+
+```
+
+3. First differences with uncertainty. LEt's see the differences between democracies and personalist regimes across the gini
+
+```{r fd}
+# Set up the simulation
+set.seed(1234)
+betas <- coef(m2)
+sims <- mvrnorm(1000, mu = betas, Sigma = vcov(m2))
+
+# Set up the cases of interest
+gini <- seq(0,100, 10)
+X1 <- X2 <- model.matrix(m2)
+# declaring personalist regimes
+X1[,"democracy"] <- 0
+X1[,"personalist"] <- 1
+X1[,"oneparty"] <- 0
+X1[,"monarchy"] <- 0
+X1[,"hybrid"] <- 0
+
+# declaring democracies
+X2[,"democracy"] <- 1
+X2[,"personalist"] <- 0
+X2[,"oneparty"] <- 0
+X2[,"monarchy"] <- 0
+X2[,"hybrid"] <- 0
+
+# Looping
+gini_fd <- matrix(NA, length(gini), 3)
+
+for (i in 1:length(gini)) {
+  X1[,"GINI"] <- X2[,"GINI"] <- gini[i]
+  gini_fd[i,1] <- mean(apply(sims, 1, function(z) mean(exp(X2%*%z) - exp(X1%*%z))))
+  gini_fd[i,2:3] <- quantile(apply(sims, 1, function(z) mean(exp(X2%*%z) - exp(X1%*%z))), c(.025,.975)) 
+}
+
+# Plotting the results
+plot(gini, gini_fd[, 1], type = 'l', lwd = 2, col = "#ff8c00",
+     ylab = "Predicted Probability",
+     xlab = "Number of Domestic Terrorist Attacks", 
+     xlim=c(1,100), ylim=c(0,120))
+x <- c(gini, rev(gini))
+ygn <- c(gini_fd[,2], rev(gini_fd[,3]))
+polygon(x, ygn, col = "#ff8c000f", border = FALSE)
+```
+
+
+### *Some of the issues with Poisson models and how to solve them* ###
+1. **Overdispersion**: This means that the Var(Y)>E(Y), which causes incorrect standard errors. There are multiple ways to see if there is overdispersion in our data. Let's see two visual diagnostics and a formal test for overdispersion. 
+
+  a. Plot $\hat\mu$ versus $(y-\hat\mu)$. This would give us a sense if there is overdispersion. It won't really tell us how to deal with it but it would give us information about te presence of the phenomenon. 
+
+```{r overdsip1}
+# plot \mu_hat vs (y-\muhat)^2
+yhat <- predict(m2, type="response")
+z <- (y-yhat)^2
+plot(z, yhat)
+```
+  
+  b. The rootgrams. This is a canned function, and in fact you need to install it from the web since it is not available for newer versions of R. (This is why we don't like canned functions). Here the x-axis are the counts of the events. The y-axis s the square root of the frequency. Bins below zero means our model is underpredicting these counts. Bins that don't reach to zero, imply that counts are being overpredicting. What is happening here?
+```{r overdsip2, comment=F}
+# Rootgrams#
+# install.packages("countreg", repos="http://R-Forge.R-project.org")
+library(countreg)
+
+rootogram(m2, main="Poisson model for terrorist events data", xlab="Count", xlim=c(0,60)) #for Poisson model
+```
+
+  c. The formal test.
+  
+  $H_o:$ No overdispersion
+  
+  $H_a:$ There is overdispersion
+  
+$$
+\sum_{i=1}^n z_i = \sum_{i=1}^n \left(\frac{y_i-\hat y}{\sqrt{\hat y}}\right)^2\sim\chi^2_{n-k}
+$$
+Where n is the number of observations in our sample and k the number of parameters (intercept included) 
+
+```{r overdsip3}
+# Calculate needed values for the statistic
+yhat <- predict(m2, type="response")                     # predicted values, how would you calculate this "manually"?
+z <- (terrorism$FGTDDom - yhat)/sqrt(yhat)
+n <- length(y)
+k <- ncol(X)
+
+# Compare the result with a chi squared distribution
+1 - pchisq(sum(z^2), n-k)
+```
+
+We now know there is overdispersion. The solution is to run a negative binomial model. This will account for the overdispersion. See the slides for the mathematical logic. Here we use the *glm.nb* function from the **MASS** package.
+```{r negbi, warning=F}
+# calculating the model
+m3 <- glm.nb(FGTDDom ~ Durable + GINI + logGNI + logpop + logarea + AggSF + ColdWar + dome_confl + inal_confl +
+            democracy + personalist + oneparty + monarchy + hybrid, 
+          data=terrorism)
+
+summary(m3)
+
+# Chekc the rootogram
+rootogram(m3, main="Negative binomial model for terrorist events data", xlab="Count", xlim=c(0,60)) 
+
+# Let's do some plots for some of the continous variables
+X <- cbind(1, terrorism[3:16])
+dimnames(X)[[2]] <- names(m3$coeff)
+X1 <- X0 <- X 
+X0[, "ColdWar"] <- 0
+X1[, "ColdWar"] <- 1
+
+for (i in c(2,3,4,5,6)) {
+  ruler <- seq(min(X0[,i]), max(X0[,i]), length = 1000)
+  xb0 <- exp(as.vector(m3$coeff[-i] %*% apply(X0[,-i], 2, mean))
+  + m3$coeff[i] * ruler)
+  xb1 <- exp(as.vector(m3$coeff[-i] %*% apply(X1[,-i], 2, mean))
+  + m3$coeff[i] * ruler)
+  plot(ruler, xb0, type="l", lwd = 1.5, col = "gray20",
+  xlab="",ylab="", ylim = c(min(xb0, xb1) - 2, max(xb0, xb1) + 2))
+  lines(ruler, xb1, lwd = 1.5, col = "red")
+  mtext(side = 1, paste("Levels of", dimnames(X0)[[2]][i]), cex=0.8, line=2.5)
+  mtext(side = 2,"Expected Executions", cex=0.6, line = 2.2)
+}
+```
+```{r plotlab, echo=F}
+plot(ruler[100:200], rep(ruler[400], 101),
+     bty="n", xaxt="n",yaxt="n", xlab="", ylab="",
+     type="l", xlim=range(ruler), ylim=range(ruler))
+lines(ruler[100:200], rep(ruler[600], 101), type="l", col = "red")
+text(ruler[500],ruler[400], "Non Cold War", cex = 1.4)
+text(ruler[440],ruler[600], "Cold War", cex = 1.4)
+
+```
+
+2. **Too many zeros**: There might be the case where you have very rare events in your dataset which leads to a large number of zeros. Even more than the ones being calculated by the Poisson or the Negative Binomial models. This could be the result of two different data generation processes. For instance, if someone asks you how many of the additional resources from our labs have you consulted in the last three days. Some people will answer zero and think "What addiitonal resources section?". Other students, really like the additional resources, but haven't used any in the past three days hence they will also respond zero. This causes some issues with your coefficients. In this cases you might want to estimate a [hurdle](https://data.library.virginia.edu/getting-started-with-hurdle-models/) or a [zero inflated](https://stats.idre.ucla.edu/r/dae/zip/) model.
+
+## **Additional Resources** ##
+  + Piazza has a more recent [paper](https://www.tandfonline.com/doi/pdf/10.1080/09546553.2014.994061?casa_token=4JTM6E09zYAAAAAA:qBWTfvgIfXDoQ10LCsZeLaP61bsuBFKC7sFcDWm0lVSVGH9MCiemi44-WAj5dKuBe6_oSyNIFdU) about terrorism using count models
+  + Check this articles from [Holland](https://onlinelibrary.wiley.com/doi/abs/10.1111/ajps.12125) that also use these models
+  + See the links for the hurdle and zero inflated models in their respective sections.
+  + Some R references to count and discrete data from [Friendly and Meyer](http://ddar.datavis.ca/pages/using)
+  + Some more explanation of rootgrams [here](https://arxiv.org/pdf/1605.01311.pdf)
