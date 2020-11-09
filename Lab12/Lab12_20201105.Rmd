@@ -1,0 +1,314 @@
+---
+title: 'Lab 12: Multi-Level Modeling'
+author: "Mateo Villamizar Chaparro"
+date: "11/06/2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab12") 
+library(foreign)
+library(MASS)
+library(tidyverse)
+library(visdat)
+library(arm)
+```
+
+## **Important Information**:
+1. **Office hours** are back! 
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+3. Short paper 2 is due Nov. 13.
+
+## **Writing Multi-Level models** ##
+
+As explained last lab, there are multiple ways of writing multi-level models. AS far as I know, the most common ones are the two I'm presenting today. The first one is modeling the distributions at each level and the second one is explaining it as pseudo-regression notation that leads to a reduced form. In the case of a varying-intercept model we have that:
+$$
+Y_{ij} \sim f_N(\beta_{0j}, \sigma^2) \\
+\\
+\beta_{0j} \sim f_N(\gamma_{00}, \tau_{00}) \\
+\\
+$$
+
+In the pseudo-regression or reduced form remmeber the set-up from last lab for a random-intercept model. I find this one a bit more intuitive, since it relies on the similarities with standard regression notation. 
+
+$$
+Y_{ij} = \alpha_{j} + \epsilon_{ij}; \quad \epsilon_{ij}\sim N(0, \sigma^2_\epsilon)\\
+\alpha_{j} = \gamma_{0} + \xi_{j}; \quad \xi_{j}\sim N(0, \sigma^2_{\xi})\\
+\\
+Y_{ij} = \gamma_{0} + \xi_{j} + \epsilon_{ij}
+$$
+
+## **Violence and Turnout in Mexico - Sandra Ley** ##
+For this lab we are going to use the data from [Ley (2017)](https://journals.sagepub.com/doi/abs/10.1177/0022002717708600).One of her empirical analysis relies on a hierarchichal model trying to understand the effect of violence in turnout in Mexico. Her first level variables are at the individual level and the second level varaibles are at the municipality level. The data contains 1000 respondents from 93 municipalities. The dataset includes a lot of variables, but for the purposes of the lab we will be focusing on the following variables:
+
+  + **turnout:** Did the individual voted in the elections?
+  + **age:** Age of the individual
+  + **female:** Indicator variable if the individual self-recognizes as a female
+  + **vict:** Indicator if the individual was victim of a crime
+  + **viol_elect:** Indicator if there was electoral violence at the municipality where the respondent lives.
+  + **homicid:** Number of homicides in a municipality per 1000 people in the year prior to the election
+  + **muni:** Municipal code where the individual lives
+  + **nom_mun:** Name of the municipality
+
+## **Random Intercept model** ##
+### Random Intercept ###
+```{r re, warning=FALSE}
+# Making the dataset a bit more manageable
+ley <- read.dta("Ley.dta")
+ley$turnout <- ifelse(ley$turnoutf_v2=="Voted",1,0)
+ley$vict <- ifelse(ley$victim=="Victim",1,0)
+names(ley)[names(ley) == "homr_cvm_year_mun100"] <- "homicid"
+vars <- c("turnout", "age", "female", "vict", "homicid", "viol_elect", "seccion", "nom_mun", "edo")
+ley2 <- ley[,vars]
+names(ley2)[names(ley2) == "seccion"] <- "muni"
+
+# Let's check for missingness
+apply(ley2, 2, function(x) round(mean(is.na(x)==TRUE)*100,1))
+
+# Calculating a random intercept model
+m1 <- lmer(turnout ~ 1 +              # unmodelled variables
+              (1 | muni),             # Random Effects and second level identifier
+            data=ley2)                # data
+
+summary(m1)
+# It is plausible that these models don't converge and thus can't be estimated. Some people tend to center varaible around the mean (a sort of standarization) to make the convergence easier. 
+
+# Some useful commands
+# To calculate the fixed effects of the model use (municipality level means)
+fixef(m1)
+# To calculate the random effects (distance from the municipal level means) for each county use (remember this object is a list)
+ranef(m1)$muni[1:10,]
+ranef(m1)$muni[, "(Intercept)"][1:10]
+# To calculate the fixed effects for each municipality use (this is also a list object)
+coef(m1)$muni[1:10, 1]
+coef(m1)$muni[, "(Intercept)"][1:10]
+# Which is the same as:
+fixef(m1) + ranef(m1)[[1]]
+# Gives the random effects in standard deviation form
+VarCorr(m1)
+# Gives the estimated variances from the model
+print(VarCorr(m1), comp = "Variance")
+# To calculate the stadard errors of the fixed effects use
+arm::se.fixef(m1)
+# To calculate the stadard errors of the random effects use
+arm::se.ranef(m1)$muni[1:10]
+
+# Make a plot to show the distribution of the random coefficients
+alpha <- coef(m1)$muni[, "(Intercept)"]
+a.lo <- coef(m1)$muni[, "(Intercept)"] - se.ranef(m1)$muni[, "(Intercept)"]
+a.hi <- coef(m1)$muni[, "(Intercept)"] + se.ranef(m1)$muni[, "(Intercept)"]
+x <- 1:length(unique(ley2$muni))
+
+
+plot(x , alpha, pch = 16, col = "#CC0066",
+     ylim = c(0,1.2), 
+     xlab = "Municipality", ylab = "Turnout")
+segments(x, a.lo, x, a.hi, col = "#CC0066")
+abline(h=fixef(m1), col="black", lty=2)
+
+```
+
+### Random Intercept with individual level predictors ###
+Let's make the model a bit more interesting and include an individual level variable.
+```{r re2, warning=FALSE}
+m2 <- lmer(turnout ~ 1 + vict + (1 | muni), data=ley2) 
+summary(m2)
+
+# Let's see the results from some of the other functions
+fixef(m2)
+ranef(m2)$muni[1:10,]
+coef(m2)$muni[1:10, ]
+
+# Specifically, let's zoom in and see what are the fitted values for Tijuana (muni==1044, position 46) for non victims
+coef(m2)$muni[46,1]
+fixef(m2)[1] + ranef(m2)$muni[46,1]
+
+# What about the fitted values for victims?
+fixef(m2)[1] + ranef(m2)$muni[46,1] + fixef(m2)[2]*1
+
+# WARNING! These formulas will change depending on the model you are running!!!
+
+# Create a placeholder matrix for the results
+res <- matrix(NA, 3,3)
+
+# Let's analyze the 95% confidence interval for Tijuana's intercept. Why can que use the qnorm here? For what can we replace it?
+# First modality calling the coefficient
+res[1, 1] <- coef(m2)$muni[46,1]
+res[1, 2:3] <- coef(m2)$muni[46,1] + qnorm(c(0.025, 0.975))*se.ranef(m2)$muni[46,1]
+# Second modality constructing the coeffcient
+res[2, 1] <- fixef(m2)["(Intercept)"] + ranef(m2)$muni[46,1]
+res[2, 2:3] <- fixef(m2)["(Intercept)"] + ranef(m2)$muni[46,1] + qnorm(c(0.025, 0.975))*se.ranef(m2)$muni[46,1]
+# Both modalities should give the same results! Be attentive to the models you call and the specification of the place identifiers
+# Let's analyze the 95% confidence interval for the victimization dummy
+res[3, 1] <- fixef(m2)["vict"]
+res[3, 2:3] <- fixef(m2)["vict"] + qnorm(c(0.025, 0.975))*se.fixef(m2)["vict"]
+
+colnames(res) <- c("Coeff", "lo_CI", "hi_CI")
+rownames(res) <- c("Using coef", "using ranef and fixef", "victimization")
+round(res, 3)
+```
+
+### Random Effects as Precision Weighted Averages ###
+
+Remember from lecture that the random effects estimates in a MLM are a precision weighted average between the complete pooling and the no pooling estimates. Let's try to see this graphically using another model
+
+$$
+\hat\xi_j =\frac{\left(\frac{n_j}{\sigma^2_\epsilon}\bar{y_j} + \frac{1}{\sigma^2_\xi}\bar{y_{all}} \right)}{\left( \frac{n_j}{\sigma^2_\epsilon} + \frac{1}{\sigma^2_\xi} \right)}
+$$
+```{r plot}
+# First, calculate the pooled and unpooled models
+lm.pooled <- lm(turnout ~ vict, data = ley2)
+lm.unpooled <- lm(turnout ~ vict + factor(muni)-1, data = ley2)
+
+# First, let's recall our results
+alpha.hat <- coef(m2)$muni[,1]
+beta.hat <- coef(m2)$muni[,2]
+# Let's analyze the first 8 municipalities
+display8 <- 1:6
+uniq.name <- c("Acayucan", "Colima", "Apizaco", "Becanora", "Ensenada", "Ameca")
+uniq.muni <- c(11, 30, 43, 48, 60, 63)
+x.jitter <- ley2$vict + runif(10, 0, 1)
+par(mfrow = c(2,3))
+for (j in display8) {
+  plot(x.jitter[ley2$muni==uniq.muni[j]],ley2$turnout[ley2$muni==uniq.muni[j]], 
+       xlim = c(0,1), ylim = c(0,1), pch = 16,
+       xlab = "Victimization", ylab = "Turnout", main = uniq.name[j])
+  curve(coef(lm.pooled)[1] + coef(lm.pooled)[2]*x, lty=2, col="red",add=TRUE)
+  curve(coef(lm.unpooled)[j+1] + coef(lm.unpooled)[1]*x, col="blue", add=TRUE)
+  curve(alpha.hat[j] + beta.hat[j]*x, lwd=1, col="purple", add=TRUE)
+}
+
+```
+
+These results should make ask ourselves what are the optimal number of municipalities (J) and individuals within each municipality (i). As we discussed in class, you can actually have municipalities with no observations, the issue is that they would not contribute information to the model and its results are going to be just the mean results. Few observations will lead to unprecise estimates of $\alpha_j$. However, for a municipality to contribute information to the estimation, it should have enough observations to calculate mean and variance. In terms of the number of municipalities, as the number of J reduces to 1, the model converges to OLS. But again at least two municipalities would be enough to fit a MLM. 
+
+### Random Intercept with individual and county level predictors ###
+
+Let's add a municipality level variable to our model
+
+```{r re3}
+m3 <- lmer(turnout ~ 1 + vict + homicid + (1 | muni), data=ley2) 
+summary(m3)
+
+# Let's see the results from some of the other functions
+fixef(m3)
+ranef(m3)$muni[1:10, 1]
+coef(m3)$muni[1:10, ]
+
+# Extracting predicted values, let's zoom in Tijuana again, for non victims and average number of homicides
+fixef(m3)[1] + ranef(m3)$muni[46,1] + fixef(m3)[2]*0 + fixef(m3)[3]*mean(ley2$homicid)
+
+fixef(m3)[1] + ranef(m3)$muni[46,1] + fixef(m3)[2]*1 + fixef(m3)[3]*mean(ley2$homicid)
+
+# Let's try to generate a plot for Tijuana
+homicides <- seq(0,74,1)
+res <- matrix(NA, length(homicides), ncol = 2)
+for (i in 0:length(homicides)) {
+  res[i,1] <- fixef(m3)[1] + ranef(m3)$muni[46,1] + fixef(m3)[2]*0 + fixef(m3)[3]*i
+  res[i,2] <- fixef(m3)[1] + ranef(m3)$muni[46,1] + fixef(m3)[2]*1 + fixef(m3)[3]*i
+}
+
+plot(homicides, res[,1], type = 'l', lwd = 2, col = "#ff8c00",
+     ylab = "Predicted Turnout in Tijuana",
+     xlab = "Number of Homicides \n per 1000 habitants", 
+     xlim=c(1,75), ylim=c(0,1))
+lines(homicides, res[,2], type = 'l', col="#940094")
+legend("topright", legend=c("Not Victim", "Victim"),
+       col=c("#ff8c00","#940094"), lty=1, cex=1)
+
+```
+
+### Three level random intercept model ###
+We can also include more levels. Let's see how results change by including a new level of our model at the State level. If we don't use any explanatory variables we have the following set-up. 
+$$
+\begin{split}
+Y_{ijk} &= \alpha_{jk} + \beta_1x_{ijk} + \epsilon_{ij}; \quad \epsilon_{ij}\sim N(0, \sigma^2_\epsilon)\\
+\alpha_{jk} &= \gamma_{0k} + \xi_{j}; \quad \xi_{j}\sim N(0, \sigma^2_{\xi})\\
+\gamma_{0k} &= \delta_{0} + \phi_{k}; \quad \phi_{k}\sim N(0, \sigma^2_{\phi})\\
+\\
+Y_{ij} &= \delta_{0} + \phi_{k} + \xi_{j} + \beta_1x_{ijk} + \epsilon_{ij}
+\end{split}
+$$
+
+
+```{r 3re}
+m5 <- lmer(turnout ~ 1 + vict + homicid + (1 | muni/edo), data=ley2) 
+summary(m5)
+
+# Fixed effects of the model
+fixef(m5)
+# Random effects for the interaction between state and municipality
+ranef(m5)[[1]][1:10, 1]
+# Random effects for municipality
+ranef(m5)[[2]][1:10, 1]
+# Coefficients for the interaction between state and municipality
+coef(m5)[[1]][1:10, ]
+# Coefficients for the municipality
+coef(m5)[[2]][1:10, ]
+```
+## **Random slope models** ##
+
+For random slope models, we now allow the slope to vary within municipalities. This complicates things a bit since it adds a new modelling choice to one of the parameters on our model. Let's see mathematically how it can be represented. LEt's start with a way to get ot the reduced form and then using a bivariate normal.
+$$
+\begin{split}
+y_{ij} &= \alpha_j + x_i\beta_j+\epsilon_{ij} \\
+\alpha_j &= \gamma_0 + \xi_j \\
+\beta_j &= \gamma_i + \zeta_j
+\end{split}
+$$
+
+Which in the reduced form can be seen as:
+$$
+\begin{split}
+y_{ij} &= \gamma_0 + \xi_j + x_i(\gamma_1 + \zeta_j)+\epsilon_{ij} \\
+\\
+&= \gamma_0 +  + x_i\gamma_1 + x_i\zeta_j+\xi_j+\epsilon_{ij} \\
+\end{split}
+$$
+And by constructon, we see we have heteroskedastic errors. It is important to highlight that we are assuming the following:
+$$
+Cov(\epsilon, \xi) = 0\\
+Cov(\epsilon, \zeta) = 0\\
+Cov(\zeta, \xi) \neq  0\\
+$$
+The second way of representing the model is by usig a bivariate normal:
+$$
+\begin{split}
+y_{ij} &\sim N(\alpha_j + x_i\beta_j, \sigma^2_\epsilon) \\
+\alpha_j &\sim (\mu_\alpha, \sigma^2_\alpha) \\
+\beta_j &= (\mu_\beta,\sigma^2_\beta)
+\end{split}
+$$
+$$
+\begin{bmatrix} \alpha_j \\ \beta_j \end{bmatrix} = N \left(\begin{bmatrix} \mu_\alpha\\ \mu_\beta \end{bmatrix},\begin{bmatrix} \sigma^2_\alpha & \sigma_\alpha\sigma_\beta \\ \sigma_\alpha\sigma_\beta & \sigma^2_\beta  \end{bmatrix}\right)
+$$
+
+Doing this in R is a bit simpler using lmer, let's see how:
+```{r rs1, warning=F}
+m4 <- lmer(turnout ~ 1 + vict*homicid + (1 + homicid | muni), data=ley2) 
+summary(m4)
+
+# Fixed and Random effects
+fixef(m4)
+ranef(m4)$muni[1:10, ]
+coef(m4)$muni[1:10, ]
+
+# Let's see the results visually
+plot(0:74, 0:74, type="n", ylim=c(0,1.1),
+     xlab="Homicides per 1000 \n hab 2011", ylab="Predicted Turnout")
+for (i in 1:50){
+  lines(0:74, coef(m4)$muni[i,"(Intercept)"] + 0:74*coef(m4)$muni[i,"homicid"], col="#ffaf4d")
+}
+```
+
+## **Additional Resources** ##
+ 
+  + I really recommend the chapters from Gelmand and Hill about hierarchichal and multi-level modeling.
+  + I also found interesting things in [this tutorial](https://quantdev.ssri.psu.edu/tutorials/r-bootcamp-introduction-multilevel-model-and-interactions)
+  + Some resources on panel data:
+    + Using the [plm package](https://cran.r-project.org/web/packages/plm/vignettes/plmPackage.html)
+    + [Torres-Reyna's slides](https://www.princeton.edu/~otorres/Panel101R.pdf) on random and fixed effects models in R
+    + Principles of Econometrics with R, [chapter on panel data](https://bookdown.org/ccolonescu/RPoE4/panel-data-models.html)
