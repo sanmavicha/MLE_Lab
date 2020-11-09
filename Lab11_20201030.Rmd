@@ -1,0 +1,272 @@
+---
+title: 'Lab 11: Some more Missing Data and intro to HLM'
+author: "Mateo Villamizar Chaparro"
+date: "10/29/2020"
+output: 
+  html_document: 
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/sanma/Dropbox/Documentos/0_Duke/3_ThirdYear/2_Fall/MLE_TA/Labs/MLE_Lab/Lab11") 
+library(foreign)
+library(MASS)
+library(tidyverse)
+library(visdat)
+library(arm)
+```
+
+## **Important Information**:
+1. **Office hours** are back! 
+2. **Labs**: Fridays from 10:15-11:30 (https://duke.zoom.us/j/93156474311)
+3. Short paper 2 is due Nov. 13.
+
+## **Some comments regarding PS4** ##
++ Whenever you deal with interactions, remember to include them within the loop (if they change).
++ You can calculate interactions just using $y\sim x*z$. This would show each individual varaible and the interaction. There is no need to create a new variable in most cases. 
++ Be careful when calculating first differences
+
+## **Some more Missing Data** ##
+For todays lab, we are going to see how to use MICE to deal with missing data. Let's use the data from [Kubota and Milner (2005)](https://scholar.princeton.edu/hvmilner/publications/why-move-free-trade-democracy-and-trade-policy-developing-countries). I eliminated some of the variables so we can have a similar dataset as the one in the course slides. The final varaibles are:
+
+  + **country:** Country number id       
+  + **ctylabel:** Country name
+  + **year:** Year
+  + **gdp:** GDP per capita
+  + **newtar:** New tariff
+  + **polity:** Measure of democracy
+  + **signed:** Signed an agreement with the MFI
+  + **usheg:** sum of US exports and imports as a percent of world trade+
+
+### *Evaluating Missingness* ###
+```{r eval}
+dat <- read.dta("KM_2005.dta")
+
+# Change the scale of some of the variables
+dat$gdp <- dat$gdp/1E4
+dat$usheg <- dat$usheg*10
+
+# Look at the percentage of missing data by variable
+apply(dat, 2, function(x) round(mean(is.na(x)==TRUE)*100,1))
+
+# Notice that our sample is larger than the sample seen in class, that is why numbers differ
+
+# Let's see this visually
+visdat::vis_dat(dat)        
+visdat::vis_miss(dat)       
+
+```
+
+There is quite some missingness in the data, let's try to solve it using different methods again. 
+
+1. Listwise deletion
+```{r lw}
+# create the dataset with omitted missing values
+dat_lw <- na.omit(dat) # Note that we can skip this step as the lm command omits NA values
+
+# Create a container for the regression formula
+f <- newtar ~ polity + gdp + signed + usheg + country
+
+# Calculate the model
+m_lw <- lm(f, data = dat_lw)
+```
+
+2. Mean imputation
+```{r mi}
+# Create the new dataset with the mean imputed values
+df_mean <- dat
+df_mean$newtar[is.na(df_mean$newtar)] <- mean(df_mean$newtar, na.rm = TRUE)
+df_mean$polity[is.na(df_mean$polity)] <- mean(df_mean$polity, na.rm = TRUE)
+df_mean$signed[is.na(df_mean$signed)] <- mean(df_mean$signed, na.rm = TRUE)
+df_mean$gdp[is.na(df_mean$gdp)] <- mean(df_mean$gdp, na.rm = TRUE)
+
+# Calculate the model
+m_mi <- lm(f, data = df_mean)
+```
+
+3. Random Imputation. We will do just one imputed dataset since we did multiple last lab.
+```{r ri}
+# Recall the random imputation function
+
+r_imp <- function(x){
+  mis <- is.na(x)
+  obs <- x[!mis]
+  x[mis] <- sample(x=obs, size=sum(mis), replace=T)
+  return(x)
+}
+
+# Create the dataset with random imputation
+sel <- c("newtar", "polity", "signed", "gdp")
+dat_i_rnd <- dat
+dat_i_rnd[, sel] <- apply(dat_i_rnd[, sel], 2, r_imp)
+
+# Let's see the distributions visually
+for (i in sel) {
+  dens <- density(dat[, i], na.rm=T)
+  bw <- dens$bw
+  dens_i <- density(dat_i_rnd[is.na(dat[, i]), i], bw=bw)
+  lims <- c(min(dens$y, dens_i$y), max(dens$y, dens_i$y))
+  plot(dens, lwd = 1.8, main = i, ylim = lims, xlab = "", ylab = "")
+  lines(dens_i, lwd = 1.4, col = "magenta")
+  legend("topright", horiz = F, legend = c("Imputed", "Original"), col = c("magenta", "black"),lty = c(1,1), cex = .8)
+}
+
+# Let's calculate the model
+m_ri <- lm(f, data = dat_i_rnd)
+
+stargazer::stargazer(m_lw, m_mi, m_ri, type = "text")
+```
+
+4. Using MICE and the *mice* package. The idea behind MICE is related to some tools from Bayesian Statistics. But put it bluntly, it tries to impute data using an algorithm that uses full conditionals to calculate the missing observations under a series of iterations. Each incomplete variable is calculated using a different model. Most of these algorithms tend to use a multivariate normal distribution to calculate the parameters, and as such, it is sometimes a good idea to transform some of the variables' distributions into normal distributions (ie logs, $\sqrt{counts}$, etc). The model documentation can be found [here](https://cran.r-project.org/web/packages/mice/mice.pdf). In very simplistic terms:
+
+  a. Draw $D_{mis}$ from a probability model $P(D_{mis}|D_{obs},\tilde\theta)$. This could be a linear regression model, where $\theta$ are the parameters of the model. You would also need a good starting point, usually MLEs are the most common. 
+  b. Replace the calculated $D_{mis}$ into a conditional $P(\theta|D_{obs},\tilde D_{mis})$
+  c. Replace the calculated $\theta$ into $P(D_{mis}|D_{obs},\tilde\theta)$ to obtain a new draw for $D_{mis}$. Do this iteration until convergence. Here convergence is done **stochastically** not **deterministically**. This means, we converge to a distribution and not a point. We will see this in some of the plots.  
+```{r mice, warning=FALSE, message=FALSE, results=FALSE}
+library(mice)
+
+# Calculate the new datasets
+dat_i_ce <- mice(data=dat,                 # name of the dataset with missing values
+                 m = 10,                   # Number of imputations, default is 5
+                 maxit = 15,               # Maximum number of iterations, default is 5
+                 method = "norm.nob")      # Imputation method used for the variables (can be a vector of strings if multiple methods are needed)
+```
+```{r mice2}
+# Let's plot some of the results by each iteration of the algorithm to see convergence (these are called traceplots)
+plot(dat_i_ce)
+
+# We can also compare observed and real values
+densityplot(dat_i_ce, ~ newtar + polity + signed)
+
+# Now, we already have the different imputed datasets, let's calculate the coefficients
+# The with function evaluates an expression in multiple imputed datasets
+m_i_ce <- with(dat_i_ce,                                                # data
+               lm(newtar ~ polity + gdp + signed + usheg + country))    # expression
+
+# Now, to calculate the coefficients using Rubin's rules we use the pool command
+pool(m_i_ce)
+# ubar - within variance (mean of variances)
+# b - between variance (average of the m complete-data variances)
+# t - Final variance estimate (V_theta in the slides)
+# dfcom - complete degrees of freedom
+# df - adjusted degrees of freedom
+# riv - relative increase in variance
+# lambda - Proportion of total variance due to missingness
+# fmi - fraction of missing information
+# We also use the summary command to make it more readable
+summary(pool(m_i_ce))
+```
+
+Finally, we can ask the imputation to use different methods to calculate the imputation. For instance, use logistic regressions for dummy variables or using predictive mean matching. Than works better for non normally distributed variables. Check this [blog](https://statisticalhorizons.com/predictive-mean-matching) for some more information.
+```{r pmmlogreg, warning=FALSE, message=FALSE, results=FALSE}
+# Let's start with using the logistic regression for the signed variable
+# The order in the meth vector needs to follow the structure of the data
+meth <- c("", "", "", "norm.boot", "norm.boot", "norm.boot", "logreg", "")
+dat_i_ce2 <- mice(dat, m = 10, maxit = 15, method = meth)
+m_i_ce2 <- with(dat_i_ce2,
+               lm(newtar ~ polity + gdp + signed + usheg + country))
+summary(pool(m_i_ce2))
+
+# Now, let's look at predictive mean matching
+meth <- "pmm"
+dat_i_ce3 <- mice(dat, m = 10, maxit = 15, method = meth)
+m_i_ce3 <- with(dat_i_ce3,
+               lm(newtar ~ polity + gdp + signed + usheg + country))
+summary(pool(m_i_ce3))
+```
+
+
+```{r plot}
+
+# Let's create a comparison plot for the effect of regime (polity) on trade
+regime <- matrix(NA, 6,3)
+regime[1,1] <- coef(m_lw)[2]
+regime[1,2:3] <- c(coef(m_lw)[2]-sqrt(vcov(m_lw)[2,2]), 
+                   coef(m_lw)[2] + sqrt(vcov(m_lw)[2,2]))
+regime[2,1] <- coef(m_mi)[2]
+regime[2,2:3] <- c(coef(m_mi)[2]-sqrt(vcov(m_mi)[2,2]), 
+                   coef(m_mi)[2] + sqrt(vcov(m_mi)[2,2]))
+regime[3,1] <- coef(m_ri)[2]
+regime[3,2:3] <- c(coef(m_ri)[2]--sqrt(vcov(m_ri)[2,2]), 
+                   coef(m_ri)[2] + sqrt(vcov(m_ri)[2,2]))
+regime[4,1] <- summary(pool(m_i_ce))[2,2]
+regime[4,2:3] <- c(summary(pool(m_i_ce))[2,2]-summary(pool(m_i_ce))[2,3],
+                   summary(pool(m_i_ce))[2,2]+summary(pool(m_i_ce))[2,3])
+regime[5,1] <- summary(pool(m_i_ce2))[2,2]
+regime[5,2:3] <- c(summary(pool(m_i_ce2))[2,2]-summary(pool(m_i_ce2))[2,3],
+                   summary(pool(m_i_ce2))[2,2]+summary(pool(m_i_ce2))[2,3])
+regime[6,1] <- summary(pool(m_i_ce3))[2,2]
+regime[6,2:3] <- c(summary(pool(m_i_ce3))[2,2]-summary(pool(m_i_ce3))[2,3],
+                   summary(pool(m_i_ce3))[2,2]+summary(pool(m_i_ce3))[2,3])
+
+# The actual plot
+plot(regime[1:6], 1:6, xlab = "Polity", 
+     ylab = "", main = "Effect of Regime in trade",
+     pch = 16, ylim = c(0.0, 6.3), xlim = c(-0.9, 0.3), axes = F,
+     col = "#CC0066")
+# Axis parameters
+axis(1, seq(-0.4, 0.7, 0.1))
+axis(2, 1:6, labels = c("List Wise", "Mean Imputation",
+                        "Random Imputation", "MICE", "MICE2", "PMM"),
+     las = 1, pos = -0.5)
+# Confidence intervals
+segments(regime[, 2], 1:6, regime[,3], 1:6, col = "#CC0066")
+# Dashed line at zero
+segments(x0=0,y0=0,x1=0,y1=6.3,col="black", lty=2)
+```
+
+The Amelia package from Honaker, Blackwell and King can also do a similar calculation. Take a look at their documentation [here](https://r.iq.harvard.edu/docs/amelia/amelia.pdf). It uses the same dataset, so you can see how results change but the way they calculate things are a bit different since they use bootstrapping to calculate the number of will be imputed datasets. 
+
+## **Hierarchical Models** ##
+
+For today, I just want to briefly introduce what HMs are and learn to understand the output of the most common function *lmer* from the *arm* package.
+
+### *Why Hierarchical Models* ###
+
+We use hierarchical models when we have a **nested data structure**. This means, we are analyzing observations within a series of groups and we believe that the groups exercise some sort of influence on the observations being analyzed. Think about how municipal level characteristics might influence vote-choice at the individual level. It is important to remember that assuming a hierarchical structure implies that the independence assumption between our observations is violated. 
+
+One of the advantages of multi-level modeling is that we can partition the variance in our model between that comming from individuals and that coming from the groups the individuals are part of. As a result, we can explore hypothesis about variation at different levels and try to understand the relationship across levels.  
+
+Two main models:
+  + **random/varying intercept:** Here we assume that the average outcome from an observation varies between the higher levels but the relationship between the dependent variable and the independent variable does not
+  + **random/varying slopes:** Here we relax the previous assumption, and we allow for the relationship between dependent varaible and independent varaible to vary between groups. 
+
+Then you can use and combne these two models to create a varying intercept and slopes model. 
+
+In terms of drawbacks from these models, we can see that they are more complex and has an additional set of assumptions and parameters defining the models. There have been some issues about interpretability as well with the effects of contextual factors in the regressions. 
+
+### *Understanding lmer* ###
+
+Let's try to understand the lmer function. Here we would run a random intercept model using data from [Ley (2017)](https://journals.sagepub.com/doi/abs/10.1177/0022002717708600). The article is also in the folder as an example for how these models are presented. Also, Prof. Ley is a Duke PhD alumna. The model we are running can be characterized by: 
+
+$$
+Y_{ij} = \alpha_{j} + \epsilon_{ij}; \quad \epsilon_{ij}\sim N(0, \sigma^2_\epsilon)\\
+\alpha_{j} = \gamma_{0} + \xi_{j}; \quad \xi_{j}\sim N(0, \sigma^2_{\xi})\\
+\\
+Y_{ij} = \gamma_{0} + \xi_{j} + \epsilon_{ij}
+$$
+
+There are multiple way to characterize the models. Next lab we will see some other ways. 
+```{r mlm, warning=FALSE}
+# Calling the data
+ley <- read.dta("Ley.dta")
+ley$turnout <- ifelse(ley$turnoutf_v2=="Voted",1,0)
+
+# Calculating a random intercept model
+mlm <- lmer(turnout ~ 1 +            # first level variables
+              (1 | muni),            # second level varaibles and second level identifier
+            data=ley)                # data
+
+summary(mlm)
+gamma <- mlm@beta
+```
+From the above we see that:
+
+  + $\gamma_{0}$ is `r gamma` 
+  + $\xi_{j}$ is 0.03656
+  + $\epsilon_{ij}$ is 0.16348
+  
+
+## **Additional Resources** ##
+  + In case you are interested in reading about multiple imputation using the multivariate normal look at this [paper](https://www.tandfonline.com/doi/abs/10.1207/s15327906mbr3304_5)
